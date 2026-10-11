@@ -4,8 +4,8 @@ import type { IShortLink } from '@/api/shortlink'
 import dayjs from 'dayjs'
 import { createLink, deleteLink, listLinks, updateLink } from '@/api/shortlink'
 import { useUserStore } from '@/store/user'
-import { getEnvBaseUrl } from '@/utils'
 import { copyText, toast } from '@/utils/common'
+import { getSiteOrigin } from '@/utils/site'
 import { EXPIRE_OPTIONS, expiresAtOf, linkStatus, matchLink, validateCode, validateTarget } from './utils'
 
 definePage({
@@ -18,16 +18,7 @@ const isAdmin = computed(() => userStore.userInfo.role === 'admin')
 const nowSec = () => Math.floor(Date.now() / 1000)
 
 /** 短链前缀，仅用于输入自定义后缀时预览；真实短链以服务端返回为准 */
-const shortPrefix = computed(() => {
-  // #ifdef H5
-  return `${window.location.origin}/s/`
-  // #endif
-  // #ifndef H5
-
-  const base = getEnvBaseUrl() || ''
-  return /^https?:\/\//.test(base) ? `${base.replace(/\/api\/?$/, '')}/s/` : '/s/'
-  // #endif
-})
+const shortPrefix = `${getSiteOrigin()}/s/`
 
 /* ---------------- 列表状态 ---------------- */
 

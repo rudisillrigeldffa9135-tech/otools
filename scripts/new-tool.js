@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 
-const CATEGORIES = ['security', 'dev', 'crypto', 'text', 'convert', 'generate']
+const CATEGORIES = ['security', 'dev', 'crypto', 'text', 'image', 'network', 'convert', 'generate']
 const [id, name = id, category = 'dev'] = process.argv.slice(2)
 
 if (!id || !/^[a-z][a-z0-9-]*$/.test(id)) {

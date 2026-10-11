@@ -8,6 +8,8 @@ export interface IVaultSummary {
   username: string
   /** 账号备注名，同一网站多个账号时用于区分，如「工作号」 */
   label: string
+  /** 是否保存了两步验证（TOTP）密钥 */
+  hasTotp: boolean
   /** 秒级时间戳 */
   createdAt: number
   updatedAt: number
@@ -16,6 +18,8 @@ export interface IVaultSummary {
 export interface IVaultItem extends IVaultSummary {
   password: string
   notes: string
+  /** 两步验证密钥：Base32 或 otpauth:// 链接 */
+  totp: string
 }
 
 export interface IVaultForm {
@@ -25,6 +29,7 @@ export interface IVaultForm {
   label: string
   password: string
   notes: string
+  totp: string
 }
 
 export function listVault() {

@@ -110,7 +110,7 @@ export async function updateUser(req: Request, env: Env, params: Record<string, 
   return null
 }
 
-/** 删除用户及其全部会话、密码库、短链数据 */
+/** 删除用户及其全部会话、密码库、短链、快传数据 */
 export async function deleteUser(req: Request, env: Env, params: Record<string, string>) {
   const admin = await requireAdmin(req, env)
   const id = parseId(params.id)
@@ -119,10 +119,11 @@ export async function deleteUser(req: Request, env: Env, params: Record<string, 
   const results = await env.DB.batch([
     env.DB.prepare('DELETE FROM vault_items WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM short_links WHERE user_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM pastes WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id),
   ])
-  if (!results[3].meta.changes)
+  if (!results[4].meta.changes)
     throw new ApiError(404, '用户不存在')
   return null
 }

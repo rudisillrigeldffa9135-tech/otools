@@ -4,6 +4,7 @@ import type { IVaultForm, IVaultItem, IVaultSummary } from '@/api/vault'
 import dayjs from 'dayjs'
 import { createVaultItem, deleteVaultItem, getVaultItem, listVault, updateVaultItem } from '@/api/vault'
 import { copyText, getRandomInts, toast } from '@/utils/common'
+import { formatCode, parseTotp, totp } from './totp'
 import { findDuplicate, groupBySite, hostOf, matchKeyword, normalizeUrl, passwordStrength } from './utils'
 
 definePage({
@@ -34,7 +35,49 @@ async function load() {
 }
 
 onLoad(load)
-onUnload(() => details.clear())
+
+/* ---------------- 两步验证码 ---------------- */
+
+/** 每秒更新一次，驱动验证码与倒计时刷新；页面不可见时停止 */
+const nowMs = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | undefined
+onShow(() => {
+  nowMs.value = Date.now()
+  ticker = setInterval(() => (nowMs.value = Date.now()), 1000)
+})
+onHide(() => clearInterval(ticker))
+onUnload(() => {
+  clearInterval(ticker)
+  details.clear()
+})
+
+/** 解析密钥并生成当前验证码；密钥无效时返回错误信息 */
+function totpOf(secret: string, timeMs = nowMs.value): { code?: string, remaining?: number, period?: number, error?: string } {
+  if (!secret.trim())
+    return {}
+  try {
+    const config = parseTotp(secret)
+    return { ...totp(config, timeMs), period: config.period }
+  }
+  catch (e: any) {
+    return { error: e?.message || '密钥无效' }
+  }
+}
+
+/** 展开条目的验证码（随 nowMs 每秒刷新） */
+const currentTotp = computed(() => (current.value?.totp ? totpOf(current.value.totp) : {}))
+
+/** 列表行上直接复制验证码 */
+async function copyTotp(id: number) {
+  try {
+    const item = await fetchDetail(id)
+    const t = totpOf(item.totp, Date.now())
+    if (!t.code)
+      return toast(t.error || '该账号没有两步验证密钥')
+    copyText(t.code)
+  }
+  catch {}
+}
 
 async function fetchDetail(id: number, force = false) {
   if (force || !details.has(id))
@@ -101,8 +144,38 @@ const showForm = ref(false)
 const saving = ref(false)
 const editingId = ref<number>()
 const showFormPassword = ref(false)
-const EMPTY_FORM: IVaultForm = { name: '', url: '', username: '', label: '', password: '', notes: '' }
+const EMPTY_FORM: IVaultForm = { name: '', url: '', username: '', label: '', password: '', notes: '', totp: '' }
 const form = reactive<IVaultForm>({ ...EMPTY_FORM })
+
+/** 表单里实时预览验证码，便于确认密钥填对了 */
+const formTotp = computed(() => totpOf(form.totp))
+
+/** 粘贴 / 扫描到 otpauth 链接时，用其中的发行方与账号补全空着的字段 */
+watch(() => form.totp, (value) => {
+  if (!/^otpauth:/i.test(value.trim()))
+    return
+  try {
+    const { issuer, account } = parseTotp(value)
+    if (issuer && !form.name.trim())
+      form.name = issuer
+    if (account && !form.username.trim())
+      form.username = account
+  }
+  catch {}
+})
+
+/** 扫描网站提供的两步验证二维码（小程序 / App；H5 请粘贴密钥或链接） */
+function scanTotp() {
+  uni.scanCode({
+    onlyFromCamera: false,
+    scanType: ['qrCode'],
+    success: ({ result }) => {
+      form.totp = result
+      if (!/^otpauth:\/\/totp\//i.test(result))
+        toast('这不是两步验证二维码')
+    },
+  })
+}
 
 const strength = computed(() => passwordStrength(form.password))
 /** 同一网站下已有相同账号时提示（不阻止保存） */
@@ -162,9 +235,11 @@ async function generatePassword() {
 async function save() {
   if (!form.name.trim())
     return toast('请填写网站名称')
+  if (formTotp.value.error)
+    return toast(`两步验证密钥无效：${formTotp.value.error}`)
   saving.value = true
   try {
-    const data = { ...form, name: form.name.trim(), url: form.url.trim(), label: form.label.trim() }
+    const data = { ...form, name: form.name.trim(), url: form.url.trim(), label: form.label.trim(), totp: form.totp.trim() }
     if (editingId.value) {
       await updateVaultItem(editingId.value, data)
       details.delete(editingId.value)
@@ -279,6 +354,7 @@ function remove(item: IVaultSummary) {
           </view>
           <view v-if="item.username" class="i-carbon-user-follow ot-vault__btn" title="复制账号" @click.stop="copyText(item.username)" />
           <view class="i-carbon-password ot-vault__btn" title="复制密码" @click.stop="copyPassword(item.id)" />
+          <view v-if="item.hasTotp" class="i-carbon-time ot-vault__btn" title="复制两步验证码" @click.stop="copyTotp(item.id)" />
           <view class="shrink-0 text-17px text-muted" :class="expandedId === item.id ? 'i-carbon-chevron-up' : 'i-carbon-chevron-down'" />
         </view>
 
@@ -304,6 +380,18 @@ function remove(item: IVaultSummary) {
                 />
                 <view class="i-carbon-copy ot-vault__btn" @click="copyText(current.password)" />
               </template>
+            </view>
+            <view v-if="current.totp" class="ot-vault__row">
+              <text class="ot-vault__row-label">验证码</text>
+              <template v-if="currentTotp.code">
+                <text class="ot-vault__totp ot-mono" user-select selectable>{{ formatCode(currentTotp.code) }}</text>
+                <view class="ot-vault__countdown" :class="{ 'is-urgent': (currentTotp.remaining || 0) <= 5 }">
+                  <view class="ot-vault__countdown-bar" :style="{ width: `${((currentTotp.remaining || 0) / (currentTotp.period || 30)) * 100}%` }" />
+                </view>
+                <text class="ot-mono w-24px shrink-0 text-right text-12px text-muted">{{ currentTotp.remaining }}s</text>
+                <view class="i-carbon-copy ot-vault__btn" @click="copyText(currentTotp.code)" />
+              </template>
+              <text v-else class="min-w-0 flex-1 text-12px text-red-500">{{ currentTotp.error }}</text>
             </view>
             <view v-if="current.url" class="ot-vault__row">
               <text class="ot-vault__row-label">网址</text>
@@ -402,6 +490,29 @@ function remove(item: IVaultSummary) {
             />
           </view>
           <text class="text-12px" :style="{ color: strength.color }">强度：{{ strength.text }}</text>
+        </view>
+
+        <view class="ot-vault__field-label">
+          两步验证密钥 <text class="text-muted">（可选）</text>
+        </view>
+        <view class="ot-vault__field">
+          <input
+            v-model="form.totp" class="ot-mono min-w-0 flex-1" placeholder="Base32 密钥或 otpauth:// 链接"
+            :maxlength="1000"
+          >
+          <!-- #ifndef H5 -->
+          <view class="i-carbon-scan ot-vault__btn" title="扫描二维码" @click="scanTotp" />
+          <!-- #endif -->
+        </view>
+        <view v-if="formTotp.code" class="mt-2 flex items-center gap-2 text-12px text-muted">
+          <view class="i-carbon-checkmark-filled text-emerald-500" />
+          <text>当前验证码 <text class="ot-mono text-main font-600">{{ formatCode(formTotp.code) }}</text>，可与网站或其他验证器核对</text>
+        </view>
+        <view v-else-if="formTotp.error" class="mt-2 text-12px text-red-500">
+          {{ formTotp.error }}
+        </view>
+        <view v-else class="mt-2 text-12px text-muted leading-18px">
+          在网站开启两步验证时，选择「无法扫描 / 手动输入」即可看到密钥。
         </view>
 
         <view class="ot-vault__field-label">
@@ -618,6 +729,35 @@ function remove(item: IVaultSummary) {
   font-size: 12px;
   color: #b45309;
   background: rgba(245, 158, 11, 0.12);
+}
+
+.ot-vault__totp {
+  flex: 1;
+  min-width: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--wot-color-theme);
+}
+
+.ot-vault__countdown {
+  flex-shrink: 0;
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ot-border);
+  overflow: hidden;
+
+  &.is-urgent .ot-vault__countdown-bar {
+    background: #ef4444;
+  }
+}
+
+.ot-vault__countdown-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--wot-color-theme);
+  transition: width 1s linear;
 }
 
 .ot-vault__meter {
