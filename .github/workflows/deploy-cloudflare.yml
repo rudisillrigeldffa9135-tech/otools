@@ -20,7 +20,8 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # 固定系统版本，避免 ubuntu-latest 切换到新版本时环境变化；升级时手动修改
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment:
       name: production
