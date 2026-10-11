@@ -5,6 +5,9 @@ import { getCategory } from '@/tools/categories'
 import { getToolByPath } from '@/tools/registry'
 import { currRoute } from '@/utils'
 
+/** 内容区最大宽度，编辑器类工具可以放宽 */
+const props = withDefaults(defineProps<{ maxWidth?: number }>(), { maxWidth: 960 })
+
 const toolStore = useToolStore()
 const path = ref('')
 
@@ -22,7 +25,7 @@ const color = computed(() => (tool.value ? getCategory(tool.value.category).colo
 </script>
 
 <template>
-  <view class="ot-container pb-8 pt-4 md:pt-6" style="max-width: 960px">
+  <view class="ot-container pb-8 pt-4 md:pt-6" :style="{ maxWidth: `${props.maxWidth}px` }">
     <view v-if="tool" class="mb-4 flex items-center gap-3">
       <view class="ot-tool-layout__icon" :style="{ color, backgroundColor: `${color}1a` }">
         <view :class="tool.icon" class="text-24px" />
