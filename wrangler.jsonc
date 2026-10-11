@@ -1,0 +1,31 @@
+// Cloudflare Workers 部署配置，详见 README「部署到 Cloudflare Workers」
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "otools",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true },
+  // H5 构建产物作为静态资源；只有 /api/* 先进入 Worker，其余请求直接命中静态资源
+  "assets": {
+    "directory": "./dist/build/h5",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "otools",
+      // 执行 `pnpm exec wrangler d1 create otools` 后，把输出的 database_id 填到这里
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  "vars": {
+    // 'true' 时开放自助注册（注册的都是普通用户）
+    "ALLOW_REGISTER": "false",
+    // 免费套餐若登录时出现 CPU 超限（1102），可调低，如 "50000"
+    "PBKDF2_ITERATIONS": "100000"
+  }
+  // 密钥不要写在这里：pnpm exec wrangler secret put VAULT_KEY
+}

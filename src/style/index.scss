@@ -1,0 +1,99 @@
+// 设计 token：浅色为默认，暗色挂在 .ot-dark 上（由 App.ku.vue 根节点切换）
+:root,
+page {
+  --wot-color-theme: #4f6ef7;
+
+  --ot-bg: #f5f6f8;
+  --ot-card: #ffffff;
+  --ot-fill: #f2f3f5;
+  --ot-border: #e5e6eb;
+  --ot-text: #1d2129;
+  --ot-text-2: #4e5969;
+  --ot-text-3: #86909c;
+  --ot-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.04);
+  --ot-font-mono: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+.ot-dark {
+  --ot-bg: #111317;
+  --ot-card: #1b1e24;
+  --ot-fill: #262a31;
+  --ot-border: #2e333b;
+  --ot-text: #e6e8eb;
+  --ot-text-2: #b4bac3;
+  --ot-text-3: #7d8590;
+  --ot-shadow: none;
+}
+
+page {
+  background-color: var(--ot-bg);
+  color: var(--ot-text);
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'PingFang SC',
+    'Microsoft YaHei',
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+// 内容区域：宽屏居中限宽
+.ot-container {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+// 工具卡片网格：手机 2 列 → 平板 3 列 → 桌面 4 列
+.ot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .ot-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .ot-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+.ot-mono {
+  font-family: var(--ot-font-mono);
+}
+
+.ot-ellipsis-2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+// 单行输入框
+.ot-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--ot-fill);
+  border: 1px solid transparent;
+  color: var(--ot-text);
+  font-size: 14px;
+  transition: border-color 0.15s;
+
+  &:focus {
+    border-color: var(--wot-color-theme);
+  }
+}

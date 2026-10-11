@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "h5",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["pnpm@10", "dev:h5"],
+      "port": 9000
+    }
+  ]
+}
