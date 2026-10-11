@@ -32,6 +32,11 @@ describe('getAuthRedirect 登录守卫', () => {
     expect(getAuthRedirect(LOGIN_PAGE)).toBe('')
   })
 
+  it('文本快传未登录也能打开（凭取件码提取）', async () => {
+    const { getAuthRedirect, PASTE_PAGE } = await setup()
+    expect(getAuthRedirect(PASTE_PAGE, { code: 'ABC23K' })).toBe('')
+  })
+
   it('已登录放行普通页面', async () => {
     const { getAuthRedirect } = await setup({ login: true, role: 'user' })
     expect(getAuthRedirect('/pages-tools/vault/index')).toBe('')

@@ -1,7 +1,8 @@
 import type { Env, SessionUser } from './lib'
-import { requireUser } from './auth'
+import { optionalUser, requireUser } from './auth'
 import { decryptJson, encryptJson } from './crypto'
 import { ApiError, isUniqueViolation, now, readJson, str } from './lib'
+import { assertNotLimited, clientKey, recordFailure } from './ratelimit'
 
 interface PasteRow {
   id: number
@@ -131,22 +132,32 @@ export async function listPastes(req: Request, env: Env) {
   }))
 }
 
+/** 取件码猜错的限流：匿名按 IP，登录用户按账号，10 分钟窗口 */
+export const PICKUP_WINDOW = 10 * 60
+export const PICKUP_LIMIT_ANONYMOUS = 10
+export const PICKUP_LIMIT_USER = 30
+
 /**
- * 按取件码提取：任何登录用户都可以。
+ * 按取件码提取：无需登录，任何拿到取件码的人都可以。
  * 阅后即焚的内容被「创建者以外的人」提取后立即删除；创建者自己在其他设备上查看不会触发销毁。
+ * 取件码只有 6 位，为防止被穷举，提取失败的次数按 IP / 账号限流。
  */
 export async function getPaste(req: Request, env: Env, params: Record<string, string>) {
-  const user: SessionUser = await requireUser(req, env)
+  const user: SessionUser | null = await optionalUser(req, env)
   const code = normalizeCode(params.code)
+  const limitKey = user ? `paste:user:${user.id}` : `paste:ip:${clientKey(req.headers.get('CF-Connecting-IP') || '')}`
+  await assertNotLimited(env, limitKey, user ? PICKUP_LIMIT_USER : PICKUP_LIMIT_ANONYMOUS)
+
   const row = await env.DB.prepare('SELECT * FROM pastes WHERE code = ?').bind(code).first<PasteRow>()
   const t = now()
   if (!row || row.expires_at <= t) {
     if (row)
       await env.DB.prepare('DELETE FROM pastes WHERE id = ?').bind(row.id).run()
+    await recordFailure(env, limitKey, PICKUP_WINDOW)
     throw new ApiError(404, '取件码不存在或已过期')
   }
 
-  const isOwner = row.user_id === user.id
+  const isOwner = !!user && row.user_id === user.id
   let current = row
   if (row.burn_after_read && !isOwner) {
     // DELETE ... RETURNING 保证并发提取时只有一个人能拿到

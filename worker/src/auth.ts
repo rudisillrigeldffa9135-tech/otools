@@ -13,18 +13,28 @@ function bearerToken(req: Request) {
   return match ? match[1] : ''
 }
 
-export async function requireUser(req: Request, env: Env): Promise<SessionUser> {
-  const token = bearerToken(req)
-  if (!token)
-    throw new ApiError(401, '请先登录')
-  const user = await env.DB.prepare(
+async function findSessionUser(env: Env, token: string) {
+  return env.DB.prepare(
     `SELECT u.id, u.username, u.nickname, u.role
        FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled = 0`,
   ).bind(await sha256Hex(token), now()).first<SessionUser>()
+}
+
+export async function requireUser(req: Request, env: Env): Promise<SessionUser> {
+  const token = bearerToken(req)
+  if (!token)
+    throw new ApiError(401, '请先登录')
+  const user = await findSessionUser(env, token)
   if (!user)
     throw new ApiError(401, '登录已过期，请重新登录')
   return user
+}
+
+/** 允许匿名访问的接口使用：已登录返回用户，未登录或会话失效返回 null */
+export async function optionalUser(req: Request, env: Env): Promise<SessionUser | null> {
+  const token = bearerToken(req)
+  return token ? findSessionUser(env, token) : null
 }
 
 export async function requireAdmin(req: Request, env: Env) {

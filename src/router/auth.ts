@@ -8,8 +8,11 @@ import { HOME_PAGE } from '@/utils'
 
 export const LOGIN_PAGE = '/pages/login/index'
 
+/** 文本快传：未登录也能凭取件码提取（发送、查看自己的快传仍需登录） */
+export const PASTE_PAGE = '/pages-tools/paste/index'
+
 /** 无需登录即可访问的页面 */
-const PUBLIC_PAGES = [LOGIN_PAGE]
+const PUBLIC_PAGES = [LOGIN_PAGE, PASTE_PAGE]
 const ADMIN_PREFIX = '/pages-admin/'
 
 export function isLoggedIn() {

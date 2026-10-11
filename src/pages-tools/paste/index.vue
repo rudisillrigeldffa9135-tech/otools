@@ -2,6 +2,7 @@
 import type { IPasteDetail, IPasteListItem, IPasteSummary } from '@/api/paste'
 import dayjs from 'dayjs'
 import { createPaste, deletePaste, getPaste, listPastes } from '@/api/paste'
+import { isLoggedIn, LOGIN_PAGE } from '@/router/auth'
 import { copyText, toast } from '@/utils/common'
 import { getPageUrl } from '@/utils/site'
 
@@ -11,6 +12,9 @@ definePage({
 
 const MAX_LENGTH = 50_000
 const PAGE_PATH = '/pages-tools/paste/index'
+
+/** 未登录时只能取件；发送与「我的快传」需要登录 */
+const loggedIn = ref(isLoggedIn())
 
 const TTL_OPTIONS = [
   { value: 600, label: '10 分钟' },
@@ -102,6 +106,13 @@ const fetchError = ref('')
 /** 只保留取件码允许的字符并转大写 */
 const normalizedCode = computed(() => codeInput.value.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6))
 
+/** 登录后回到本页，已输入的取件码一并带上 */
+function toLogin() {
+  const code = normalizedCode.value
+  const back = code.length === 6 ? `${PAGE_PATH}?code=${code}` : PAGE_PATH
+  uni.navigateTo({ url: `${LOGIN_PAGE}?redirect=${encodeURIComponent(back)}` })
+}
+
 async function fetchByCode(code = normalizedCode.value) {
   if (code.length !== 6)
     return toast('请输入 6 位取件码')
@@ -114,7 +125,8 @@ async function fetchByCode(code = normalizedCode.value) {
     tick()
     if (fetched.value.burned)
       toast('内容已销毁，请及时复制')
-    loadList()
+    if (loggedIn.value)
+      loadList()
   }
   catch (e: any) {
     fetchError.value = e?.message || '提取失败'
@@ -180,7 +192,9 @@ onLoad((query) => {
   }
 })
 onShow(() => {
-  loadList()
+  loggedIn.value = isLoggedIn()
+  if (loggedIn.value)
+    loadList()
   ticker = setInterval(tick, 30_000)
 })
 onHide(() => clearInterval(ticker))
@@ -225,89 +239,101 @@ onUnload(() => clearInterval(ticker))
       </view>
     </ot-panel>
 
-    <!-- 发送 -->
-    <ot-panel title="发送">
-      <template #extra>
-        <text class="text-12px" :class="content.length > MAX_LENGTH * 0.9 ? 'text-red-500' : 'text-muted'">{{ content.length }}/{{ MAX_LENGTH }}</text>
-        <wd-button size="small" type="info" plain @click="pasteFromClipboard">
-          从剪贴板粘贴
+    <ot-panel v-if="!loggedIn">
+      <view class="flex flex-wrap items-center gap-3">
+        <view class="i-carbon-locked shrink-0 text-20px text-muted" />
+        <text class="min-w-0 flex-1 text-13px text-sub leading-20px">无需登录即可凭取件码提取内容。登录后可以发送文字，并在所有设备上查看自己发送的快传。</text>
+        <wd-button size="small" @click="toLogin">
+          登录
         </wd-button>
-      </template>
-      <ot-textarea v-model="content" :height="130" :mono="false" placeholder="输入或粘贴要传到其他设备的文字、链接、验证码等" />
-      <view class="mt-3 flex flex-col gap-3 text-13px text-sub">
-        <view class="flex items-center gap-3">
-          <text class="w-60px shrink-0">有效期</text>
-          <ot-segmented v-model="ttl" :options="TTL_OPTIONS" size="small" />
-        </view>
-        <view class="flex items-center gap-3">
-          <text class="w-60px shrink-0">阅后即焚</text>
-          <wd-switch v-model="burn" size="20px" />
-          <text class="text-12px text-muted">他人提取一次后立即删除（你自己查看不受影响）</text>
-        </view>
-      </view>
-      <wd-button block custom-class="mt-4" :loading="sending" :disabled="content.length > MAX_LENGTH" @click="send">
-        发送
-      </wd-button>
-
-      <view v-if="sent" class="ot-paste__result">
-        <text class="text-13px text-sub">取件码（已复制）</text>
-        <text class="ot-paste__big-code ot-mono" user-select selectable>{{ prettyCode(sent.code) }}</text>
-        <text class="text-12px text-muted">
-          {{ remainText(sent.expiresAt) }}{{ sent.burnAfterRead ? ' · 阅后即焚' : '' }} · 在另一台设备打开「文本快传」输入取件码，或扫码打开
-        </text>
-        <view class="mt-3 flex flex-wrap justify-center gap-2">
-          <wd-button size="small" icon="copy" @click="copyText(sent.code)">
-            复制取件码
-          </wd-button>
-          <wd-button size="small" type="info" plain :disabled="!linkOf(sent.code)" @click="copyText(linkOf(sent.code))">
-            复制链接
-          </wd-button>
-          <wd-button size="small" type="info" plain @click="toQrcode(sent.code)">
-            二维码
-          </wd-button>
-        </view>
       </view>
     </ot-panel>
 
-    <!-- 我的快传 -->
-    <ot-panel :title="`我的快传 · ${list.length}`">
-      <template #extra>
-        <view class="i-carbon-renew cursor-pointer text-17px text-muted" :class="{ 'animate-spin': listLoading }" @click="loadList" />
-      </template>
-      <view v-if="!list.length" class="py-6 text-center text-13px text-muted">
-        {{ listLoading ? '加载中…' : '还没有快传，发送后会显示在这里，你的所有设备都能看到' }}
-      </view>
-      <view v-for="item in list" :key="item.code" class="ot-paste__item">
-        <view class="flex items-start gap-2">
-          <text class="min-w-0 flex-1 break-all text-14px text-main leading-relaxed">{{ item.preview }}</text>
-          <text class="ot-paste__code-tag ot-mono" @click="copyText(item.code)">{{ prettyCode(item.code) }}</text>
-        </view>
-        <view class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-12px text-muted">
-          <text>{{ dayjs(item.createdAt * 1000).format('MM-DD HH:mm') }}</text>
-          <text>{{ item.size }} 字</text>
-          <text>{{ remainText(item.expiresAt) }}</text>
-          <text v-if="item.views">被提取 {{ item.views }} 次</text>
-          <text v-if="item.burnAfterRead" class="ot-paste__burn">阅后即焚</text>
-        </view>
-        <view class="ot-paste__actions">
-          <view class="ot-paste__action" @click="copyContent(item)">
-            <view class="i-carbon-copy" />复制内容
+    <template v-else>
+      <!-- 发送 -->
+      <ot-panel title="发送">
+        <template #extra>
+          <text class="text-12px" :class="content.length > MAX_LENGTH * 0.9 ? 'text-red-500' : 'text-muted'">{{ content.length }}/{{ MAX_LENGTH }}</text>
+          <wd-button size="small" type="info" plain @click="pasteFromClipboard">
+            从剪贴板粘贴
+          </wd-button>
+        </template>
+        <ot-textarea v-model="content" :height="130" :mono="false" placeholder="输入或粘贴要传到其他设备的文字、链接、验证码等" />
+        <view class="mt-3 flex flex-col gap-3 text-13px text-sub">
+          <view class="flex items-center gap-3">
+            <text class="w-60px shrink-0">有效期</text>
+            <ot-segmented v-model="ttl" :options="TTL_OPTIONS" size="small" />
           </view>
-          <view class="ot-paste__action" @click="copyText(item.code)">
-            <view class="i-carbon-password" />复制取件码
-          </view>
-          <view class="ot-paste__action" @click="toQrcode(item.code)">
-            <view class="i-carbon-qr-code" />二维码
-          </view>
-          <view class="ot-paste__action is-danger" @click="remove(item)">
-            <view class="i-carbon-trash-can" />删除
+          <view class="flex items-center gap-3">
+            <text class="w-60px shrink-0">阅后即焚</text>
+            <wd-switch v-model="burn" size="20px" />
+            <text class="text-12px text-muted">他人提取一次后立即删除（你自己查看不受影响）</text>
           </view>
         </view>
-      </view>
-    </ot-panel>
+        <wd-button block custom-class="mt-4" :loading="sending" :disabled="content.length > MAX_LENGTH" @click="send">
+          发送
+        </wd-button>
+
+        <view v-if="sent" class="ot-paste__result">
+          <text class="text-13px text-sub">取件码（已复制）</text>
+          <text class="ot-paste__big-code ot-mono" user-select selectable>{{ prettyCode(sent.code) }}</text>
+          <text class="text-12px text-muted">
+            {{ remainText(sent.expiresAt) }}{{ sent.burnAfterRead ? ' · 阅后即焚' : '' }} · 在另一台设备打开「文本快传」输入取件码，或扫码打开
+          </text>
+          <view class="mt-3 flex flex-wrap justify-center gap-2">
+            <wd-button size="small" icon="copy" @click="copyText(sent.code)">
+              复制取件码
+            </wd-button>
+            <wd-button size="small" type="info" plain :disabled="!linkOf(sent.code)" @click="copyText(linkOf(sent.code))">
+              复制链接
+            </wd-button>
+            <wd-button size="small" type="info" plain @click="toQrcode(sent.code)">
+              二维码
+            </wd-button>
+          </view>
+        </view>
+      </ot-panel>
+
+      <!-- 我的快传 -->
+      <ot-panel :title="`我的快传 · ${list.length}`">
+        <template #extra>
+          <view class="i-carbon-renew cursor-pointer text-17px text-muted" :class="{ 'animate-spin': listLoading }" @click="loadList" />
+        </template>
+        <view v-if="!list.length" class="py-6 text-center text-13px text-muted">
+          {{ listLoading ? '加载中…' : '还没有快传，发送后会显示在这里，你的所有设备都能看到' }}
+        </view>
+        <view v-for="item in list" :key="item.code" class="ot-paste__item">
+          <view class="flex items-start gap-2">
+            <text class="min-w-0 flex-1 break-all text-14px text-main leading-relaxed">{{ item.preview }}</text>
+            <text class="ot-paste__code-tag ot-mono" @click="copyText(item.code)">{{ prettyCode(item.code) }}</text>
+          </view>
+          <view class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-12px text-muted">
+            <text>{{ dayjs(item.createdAt * 1000).format('MM-DD HH:mm') }}</text>
+            <text>{{ item.size }} 字</text>
+            <text>{{ remainText(item.expiresAt) }}</text>
+            <text v-if="item.views">被提取 {{ item.views }} 次</text>
+            <text v-if="item.burnAfterRead" class="ot-paste__burn">阅后即焚</text>
+          </view>
+          <view class="ot-paste__actions">
+            <view class="ot-paste__action" @click="copyContent(item)">
+              <view class="i-carbon-copy" />复制内容
+            </view>
+            <view class="ot-paste__action" @click="copyText(item.code)">
+              <view class="i-carbon-password" />复制取件码
+            </view>
+            <view class="ot-paste__action" @click="toQrcode(item.code)">
+              <view class="i-carbon-qr-code" />二维码
+            </view>
+            <view class="ot-paste__action is-danger" @click="remove(item)">
+              <view class="i-carbon-trash-can" />删除
+            </view>
+          </view>
+        </view>
+      </ot-panel>
+    </template>
 
     <view class="px-1 text-12px text-muted leading-20px">
-      内容在服务端加密保存，到期自动删除。只有登录用户能用取件码提取；你登录的所有设备都能在「我的快传」中看到自己发送的内容。
+      内容在服务端加密保存，到期自动删除。拿到取件码或链接的人无需登录即可提取，请只发给信任的人，敏感内容建议开启阅后即焚；你登录的所有设备都能在「我的快传」中看到自己发送的内容。
     </view>
   </ot-tool-layout>
 </template>
