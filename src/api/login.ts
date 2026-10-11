@@ -1,4 +1,5 @@
 import type { IAuthLoginRes, ICaptcha, IDoubleTokenRes, IUpdateInfo, IUpdatePassword, IUserInfoRes } from './types/login'
+import type { CustomRequestOptions } from '@/http/types'
 import { http } from '@/http/http'
 
 /**
@@ -21,8 +22,8 @@ export function getCode() {
  * 用户登录
  * @param loginForm 登录表单
  */
-export function login(loginForm: ILoginForm) {
-  return http.post<IAuthLoginRes>('/auth/login', loginForm)
+export function login(loginForm: ILoginForm, options?: Partial<CustomRequestOptions>) {
+  return http.post<IAuthLoginRes>('/auth/login', loginForm, undefined, undefined, options)
 }
 
 /**
@@ -103,13 +104,13 @@ export function getAuthStatus() {
 }
 
 /** 首次使用：创建第一个管理员，成功后直接返回 token */
-export function setupAdmin(data: IRegisterForm) {
-  return http.post<IAuthLoginRes>('/auth/setup', data)
+export function setupAdmin(data: IRegisterForm, options?: Partial<CustomRequestOptions>) {
+  return http.post<IAuthLoginRes>('/auth/setup', data, undefined, undefined, options)
 }
 
 /** 自助注册（需服务端开启 ALLOW_REGISTER） */
-export function register(data: IRegisterForm) {
-  return http.post<IAuthLoginRes>('/auth/register', data)
+export function register(data: IRegisterForm, options?: Partial<CustomRequestOptions>) {
+  return http.post<IAuthLoginRes>('/auth/register', data, undefined, undefined, options)
 }
 
 /** 修改自己的密码，成功后其他设备的登录会失效 */

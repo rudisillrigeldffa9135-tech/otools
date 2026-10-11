@@ -44,6 +44,9 @@ const pages = {
     autoscan: true,
     custom: {
       '^fg-(.*)': '@/components/fg-$1/fg-$1.vue',
+      // 必须与 pages.config.ts 的 easycom 保持一致：CI 等干净环境首次构建时 uni 读的是这份文件，
+      // 缺了这条规则 wd-* 组件不会被打包，页面上只剩空标签（输入框无法输入、按钮无样式）
+      '^wd-(.*)': 'wot-design-uni/components/wd-$1/wd-$1.vue',
       '^(?!z-paging-refresh|z-paging-load-more)z-paging(.*)':
         'z-paging/components/z-paging$1/z-paging$1.vue',
     },

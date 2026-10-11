@@ -45,6 +45,14 @@ jobs:
       - name: 构建 H5
         run: pnpm build:h5:prod
 
+      # 干净环境下 easycom 配置不全会导致 wd-* 组件没被打包，页面只剩空标签，这里兜底检查
+      - name: 检查组件库已打包
+        run: |
+          if ! grep -qs "wd-button" dist/build/h5/assets/*.js; then
+            echo "::error::构建产物中没有 wot-design-uni 组件，请检查 scripts/create-base-files.js 的 easycom 配置"
+            exit 1
+          fi
+
       # 构建会生成 src/pages.json 等文件，测试依赖它们，所以放在构建之后
       - name: 测试
         run: pnpm test:run
