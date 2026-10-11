@@ -69,6 +69,26 @@ pnpm worker:dev
 5. 构建并部署：`pnpm deploy:cf`
 6. 打开 `https://otools.<你的子域>.workers.dev`，创建管理员账号
 
+### 自动部署（GitHub Actions）
+
+推送到 `main` 分支后，[.github/workflows/deploy-cloudflare.yml](.github/workflows/deploy-cloudflare.yml) 会自动执行：
+安装依赖 → 构建 H5 → 测试 → 准备 D1 与密钥 → 数据库迁移 → `wrangler deploy`。
+也可以在仓库的 Actions 页面手动运行。走自动部署时，上面的手动步骤 2~5 都不需要做。
+
+一次性配置：在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中添加 3 个 Repository secrets：
+
+| Secret | 说明 |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | 在 Cloudflare 控制台「我的个人资料 → API 令牌」创建：用「编辑 Cloudflare Workers」模板，再额外添加 **账户 → D1 → 编辑** 权限 |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 控制台「Workers 和 Pages」页面右侧的账户 ID |
+| `VAULT_KEY` | 密码库主密钥，base64 编码的 32 字节随机数，生成方式见 `.dev.vars.example`。请另外妥善备份 |
+
+说明：
+- `wrangler.jsonc` 中的 `database_id` 保持占位符即可：部署脚本 [scripts/cf-prepare.mjs](scripts/cf-prepare.mjs) 会按名称查找远程 D1 数据库，不存在就自动创建（只改 CI 工作区，不会提交回仓库）。如果你已经手动创建并填好了 ID，则直接使用
+- `VAULT_KEY` 只在 Worker 上还没有这个 secret 时（首次部署）写入，之后的部署**不会覆盖**，避免误改导致已保存的密码无法解密。确实要更换只能手动处理，且旧数据将无法解密
+- 新的 Cloudflare 账户需要先在控制台打开一次「Workers 和 Pages」，注册 `workers.dev` 子域，否则首次部署会失败
+- 多次提交会排队依次部署，不会并发
+
 可选配置（`wrangler.jsonc` 的 `vars`）：
 - `ALLOW_REGISTER`：`"true"` 时登录页开放自助注册（注册的都是普通用户），默认只能由管理员在「我的 → 用户管理」中创建账号
 - `PBKDF2_ITERATIONS`：密码哈希迭代次数，默认 100000。Workers 免费套餐每次请求 CPU 时间有限，若登录时报 1102 错误可调低（如 50000）

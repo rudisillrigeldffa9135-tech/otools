@@ -50,3 +50,4 @@ src/pages.json
 # Cloudflare Workers
 .wrangler
 .dev.vars
+.cf-secrets.json

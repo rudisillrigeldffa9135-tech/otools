@@ -1,0 +1,81 @@
+# 推送到 main 时自动构建并部署到 Cloudflare Workers（也可在 Actions 页面手动触发）
+# 需要的仓库 Secrets（Settings → Secrets and variables → Actions）：
+#   CLOUDFLARE_API_TOKEN   Cloudflare API Token，权限见 README「自动部署」
+#   CLOUDFLARE_ACCOUNT_ID  Cloudflare 账户 ID
+#   VAULT_KEY              密码库主密钥，仅首次部署时写入 Worker，之后不会覆盖
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一时间只跑一个部署，新提交排队等待而不是取消正在进行的部署（避免迁移执行到一半被中断）
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 版本取自 package.json 的 packageManager 字段
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 H5
+        run: pnpm build:h5:prod
+
+      # 构建会生成 src/pages.json 等文件，测试依赖它们，所以放在构建之后
+      - name: 测试
+        run: pnpm test:run
+
+      - name: 检查 Worker 类型
+        run: pnpm exec tsc -p worker/tsconfig.json
+
+      - name: 准备 D1 与密钥
+        id: prepare
+        run: node scripts/cf-prepare.mjs
+        env:
+          VAULT_KEY: ${{ secrets.VAULT_KEY }}
+
+      - name: 执行数据库迁移
+        run: pnpm exec wrangler d1 migrations apply otools --remote
+
+      - name: 部署
+        id: deploy
+        run: |
+          # 版本说明：短 SHA + 提交说明第一行（wrangler 限制 100 字符）
+          title=$(printf '%s' "${COMMIT_MESSAGE:-manual deploy}" | head -n 1 | cut -c 1-80)
+          args=(deploy --message "${GITHUB_SHA::7} ${title}")
+          if [ -n "${{ steps.prepare.outputs.secrets_file }}" ]; then
+            args+=(--secrets-file "${{ steps.prepare.outputs.secrets_file }}")
+          fi
+          pnpm exec wrangler "${args[@]}" | tee deploy.log
+          url=$(grep -oE 'https://[^ ]+\.workers\.dev' deploy.log | head -n 1 || true)
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+
+      - name: 清理密钥文件
+        if: always()
+        run: rm -f .cf-secrets.json
