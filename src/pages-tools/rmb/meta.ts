@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-currency-yen',
   keywords: ['rmb', '人民币', '大写', '金额', '财务', '报销', '中文数字'],
   order: 4,
-  isNew: true,
 })

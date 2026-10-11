@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-list-checked',
   keywords: ['text', 'dedupe', 'sort', '去重', '排序', '去空行', '批量', '前缀', '后缀', '行转列'],
   order: 3,
-  isNew: true,
 })

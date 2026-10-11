@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-link',
   keywords: ['short', 'url', 'link', '短链', '短网址', '转短链', '链接'],
   order: 1,
-  isNew: true,
 })

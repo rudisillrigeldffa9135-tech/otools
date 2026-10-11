@@ -1,7 +1,7 @@
 /** 工具可运行的平台，与 process.env.UNI_PLATFORM 取值一致 */
 export type ToolPlatform = 'h5' | 'mp-weixin' | 'app'
 
-export type CategoryId = 'security' | 'dev' | 'crypto' | 'text' | 'image' | 'network' | 'convert' | 'generate'
+export type CategoryId = 'security' | 'dev' | 'crypto' | 'text' | 'image' | 'network' | 'life' | 'convert' | 'generate'
 
 export interface Category {
   id: CategoryId

@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-certificate',
   keywords: ['jwt', 'token', 'json web token', '令牌', '解码', '签名'],
   order: 3,
-  isNew: true,
 })

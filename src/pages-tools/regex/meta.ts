@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-search-locate',
   keywords: ['regex', 'regexp', '正则', '表达式', '匹配', '替换'],
   order: 4,
-  isNew: true,
 })

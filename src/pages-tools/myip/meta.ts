@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-location',
   keywords: ['ip', 'my ip', '公网', 'ip地址', '归属地', '运营商', 'asn'],
   order: 0,
-  isNew: true,
 })

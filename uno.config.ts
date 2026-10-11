@@ -17,17 +17,22 @@ import {
 
 /**
  * 工具与分类的图标是运行时动态拼接的类名，UnoCSS 无法静态扫描到，
- * 这里从 meta.ts / categories.ts 中提取 `icon: 'i-xxx'` 自动加入 safelist
+ * 这里从 categories.ts 与各工具目录的 .ts 文件中提取 `icon: 'i-xxx'` 自动加入 safelist
  */
 function collectDynamicIcons() {
   const root = process.cwd()
   const files = [path.resolve(root, 'src/tools/categories.ts')]
   const toolsDir = path.resolve(root, 'src/pages-tools')
   if (fs.existsSync(toolsDir)) {
+    // meta.ts 以及工具内部的数据文件（如单位换算的类别图标）
     for (const dir of fs.readdirSync(toolsDir)) {
-      const meta = path.join(toolsDir, dir, 'meta.ts')
-      if (fs.existsSync(meta))
-        files.push(meta)
+      const full = path.join(toolsDir, dir)
+      if (!fs.statSync(full).isDirectory())
+        continue
+      for (const file of fs.readdirSync(full)) {
+        if (file.endsWith('.ts') && !file.endsWith('.test.ts') && !file.endsWith('.d.ts'))
+          files.push(path.join(full, file))
+      }
     }
   }
   const icons = new Set<string>()

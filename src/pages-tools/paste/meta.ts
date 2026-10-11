@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-send-alt',
   keywords: ['paste', 'clipboard', '快传', '剪贴板', '传文字', '阅后即焚', '取件码'],
   order: 5,
-  isNew: true,
 })

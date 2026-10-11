@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-image-copy',
   keywords: ['image', 'compress', 'resize', 'webp', '压缩', '图片', '格式转换', '尺寸'],
   order: 0,
-  isNew: true,
 })

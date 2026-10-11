@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-password',
   keywords: ['vault', 'password', '密码', '账号', '密码本', '网站', '多账号', 'totp', '2fa', '两步验证', '动态码', 'authenticator'],
   order: 1,
-  isNew: true,
 })

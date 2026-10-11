@@ -10,5 +10,4 @@ export default defineTool({
   // 依赖 canvas 读取像素：H5 用 DOM canvas，微信小程序用 type="2d" canvas
   platforms: ['h5', 'mp-weixin'],
   order: 3,
-  isNew: true,
 })

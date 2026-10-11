@@ -130,6 +130,8 @@
     "dayjs": "1.11.10",
     "diff": "^9.0.0",
     "js-base64": "^3.9.4",
+    "jsqr": "1.4.0",
+    "lunar-javascript": "1.7.7",
     "pinia": "2.0.36",
     "pinia-plugin-persistedstate": "3.2.1",
     "uqrcodejs": "^4.0.7",

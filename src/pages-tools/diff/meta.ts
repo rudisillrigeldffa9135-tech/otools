@@ -8,5 +8,4 @@ export default defineTool({
   icon: 'i-carbon-compare',
   keywords: ['diff', 'compare', '对比', '比较', '差异', '比对'],
   order: 5,
-  isNew: true,
 })

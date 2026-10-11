@@ -1,12 +1,13 @@
 /**
  * OTools Cloudflare Worker 入口
- * - /api/*：认证、用户管理、密码库、短链、文本快传、我的 IP 等接口（D1 存储）
+ * - /api/*：认证、用户管理、密码库、短链、文本快传、我的 IP、DNS 查询等接口（D1 存储）
  * - /s/:code：短链跳转
  * - 其余请求：交给静态资源（H5 构建产物 dist/build/h5），见 wrangler.jsonc 的 assets 配置
  */
 import type { Env } from './lib'
 import * as admin from './admin'
 import * as auth from './auth'
+import * as dns from './dns'
 import { ApiError, fail, ok } from './lib'
 import * as network from './network'
 import * as paste from './paste'
@@ -59,6 +60,7 @@ route('PUT', '/api/links/:id', shortlink.updateLink)
 route('DELETE', '/api/links/:id', shortlink.deleteLink)
 
 route('GET', '/api/ip', network.myIp)
+route('GET', '/api/dns', dns.lookup)
 
 route('GET', '/api/pastes', paste.listPastes)
 route('POST', '/api/pastes', paste.createPaste)
