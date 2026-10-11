@@ -6,6 +6,8 @@ export interface IVaultSummary {
   name: string
   url: string
   username: string
+  /** 账号备注名，同一网站多个账号时用于区分，如「工作号」 */
+  label: string
   /** 秒级时间戳 */
   createdAt: number
   updatedAt: number
@@ -20,6 +22,7 @@ export interface IVaultForm {
   name: string
   url: string
   username: string
+  label: string
   password: string
   notes: string
 }

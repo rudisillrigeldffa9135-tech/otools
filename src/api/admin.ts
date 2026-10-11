@@ -12,6 +12,8 @@ export interface IAdminUser {
   createdAt: number
   /** 密码库条目数 */
   itemCount: number
+  /** 短链接数 */
+  linkCount: number
 }
 
 export interface ICreateUserForm {

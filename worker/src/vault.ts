@@ -14,6 +14,7 @@ interface VaultRow {
   name: string
   url: string
   username: string
+  label: string
   secret: string
   created_at: number
   updated_at: number
@@ -33,6 +34,7 @@ function parseBody(body: Record<string, unknown>) {
     name: str(body.name, '网站名称', { required: true, max: 100 }).trim(),
     url: str(body.url, '网址', { max: 500 }).trim(),
     username: str(body.username, '账号', { max: 200 }),
+    label: str(body.label, '账号备注', { max: 30 }).trim(),
     secret: {
       password: str(body.password, '密码', { max: 1000 }),
       notes: str(body.notes, '备注', { max: 5000 }),
@@ -46,6 +48,7 @@ function toSummary(row: VaultRow) {
     name: row.name,
     url: row.url,
     username: row.username,
+    label: row.label,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -65,7 +68,7 @@ async function encrypt(env: Env, userId: number, secret: VaultSecret) {
 export async function listItems(req: Request, env: Env) {
   const user = await requireUser(req, env)
   const { results } = await env.DB.prepare(
-    'SELECT id, name, url, username, created_at, updated_at FROM vault_items WHERE user_id = ? ORDER BY updated_at DESC, id DESC',
+    'SELECT id, name, url, username, label, created_at, updated_at FROM vault_items WHERE user_id = ? ORDER BY updated_at DESC, id DESC',
   ).bind(user.id).all<VaultRow>()
   return results.map(toSummary)
 }
@@ -96,8 +99,8 @@ export async function createItem(req: Request, env: Env) {
     throw new ApiError(400, `最多保存 ${MAX_ITEMS_PER_USER} 条`)
   const t = now()
   const res = await env.DB.prepare(
-    'INSERT INTO vault_items (user_id, name, url, username, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).bind(user.id, input.name, input.url, input.username, await encrypt(env, user.id, input.secret), t, t).run()
+    'INSERT INTO vault_items (user_id, name, url, username, label, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  ).bind(user.id, input.name, input.url, input.username, input.label, await encrypt(env, user.id, input.secret), t, t).run()
   return { id: Number(res.meta.last_row_id) }
 }
 
@@ -106,8 +109,8 @@ export async function updateItem(req: Request, env: Env, params: Record<string, 
   const id = parseId(params.id)
   const input = parseBody(await readJson(req))
   const res = await env.DB.prepare(
-    'UPDATE vault_items SET name = ?, url = ?, username = ?, secret = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-  ).bind(input.name, input.url, input.username, await encrypt(env, user.id, input.secret), now(), id, user.id).run()
+    'UPDATE vault_items SET name = ?, url = ?, username = ?, label = ?, secret = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+  ).bind(input.name, input.url, input.username, input.label, await encrypt(env, user.id, input.secret), now(), id, user.id).run()
   if (!res.meta.changes)
     throw new ApiError(404, '条目不存在')
   return null

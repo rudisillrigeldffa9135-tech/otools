@@ -86,7 +86,7 @@ async function save() {
 function remove(u: IAdminUser) {
   uni.showModal({
     title: '删除用户',
-    content: `确定删除「${u.username}」吗？该用户的 ${u.itemCount} 条密码库数据将一并删除，且无法恢复。`,
+    content: `确定删除「${u.username}」吗？该用户的 ${u.itemCount} 条密码库数据和 ${u.linkCount} 个短链接将一并删除，且无法恢复。`,
     confirmColor: '#ef4444',
     success: async ({ confirm }) => {
       if (!confirm)
@@ -130,7 +130,7 @@ function remove(u: IAdminUser) {
             </wd-tag>
           </view>
           <view class="mt-2px truncate text-12px text-muted">
-            @{{ u.username }} · {{ u.itemCount }} 条密码 · 创建于 {{ dayjs(u.createdAt * 1000).format('YYYY-MM-DD') }}
+            @{{ u.username }} · {{ u.itemCount }} 条密码 · {{ u.linkCount }} 个短链 · 创建于 {{ dayjs(u.createdAt * 1000).format('YYYY-MM-DD') }}
           </view>
         </view>
         <view class="i-carbon-edit ot-user__btn" title="编辑" @click="openEdit(u)" />

@@ -11,6 +11,7 @@ interface UserRow {
   disabled: number
   created_at: number
   item_count: number
+  link_count: number
 }
 
 function parseId(id: string) {
@@ -24,7 +25,8 @@ export async function listUsers(req: Request, env: Env) {
   await requireAdmin(req, env)
   const { results } = await env.DB.prepare(
     `SELECT u.id, u.username, u.nickname, u.role, u.disabled, u.created_at,
-            (SELECT COUNT(*) FROM vault_items v WHERE v.user_id = u.id) AS item_count
+            (SELECT COUNT(*) FROM vault_items v WHERE v.user_id = u.id) AS item_count,
+            (SELECT COUNT(*) FROM short_links l WHERE l.user_id = u.id) AS link_count
        FROM users u ORDER BY u.id`,
   ).all<UserRow>()
   return results.map(u => ({
@@ -35,6 +37,7 @@ export async function listUsers(req: Request, env: Env) {
     disabled: !!u.disabled,
     createdAt: u.created_at,
     itemCount: u.item_count,
+    linkCount: u.link_count,
   }))
 }
 
@@ -107,7 +110,7 @@ export async function updateUser(req: Request, env: Env, params: Record<string, 
   return null
 }
 
-/** 删除用户及其全部会话、密码库数据 */
+/** 删除用户及其全部会话、密码库、短链数据 */
 export async function deleteUser(req: Request, env: Env, params: Record<string, string>) {
   const admin = await requireAdmin(req, env)
   const id = parseId(params.id)
@@ -115,10 +118,11 @@ export async function deleteUser(req: Request, env: Env, params: Record<string, 
     throw new ApiError(400, '不能删除自己')
   const results = await env.DB.batch([
     env.DB.prepare('DELETE FROM vault_items WHERE user_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM short_links WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id),
   ])
-  if (!results[2].meta.changes)
+  if (!results[3].meta.changes)
     throw new ApiError(404, '用户不存在')
   return null
 }

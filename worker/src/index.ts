@@ -1,12 +1,14 @@
 /**
  * OTools Cloudflare Worker 入口
- * - /api/*：认证、用户管理、密码库接口（D1 存储）
+ * - /api/*：认证、用户管理、密码库、短链接口（D1 存储）
+ * - /s/:code：短链跳转
  * - 其余请求：交给静态资源（H5 构建产物 dist/build/h5），见 wrangler.jsonc 的 assets 配置
  */
 import type { Env } from './lib'
 import * as admin from './admin'
 import * as auth from './auth'
 import { ApiError, fail, ok } from './lib'
+import * as shortlink from './shortlink'
 import * as vault from './vault'
 
 type Handler = (req: Request, env: Env, params: Record<string, string>) => Promise<unknown>
@@ -49,6 +51,11 @@ route('GET', '/api/vault/:id', vault.getItem)
 route('PUT', '/api/vault/:id', vault.updateItem)
 route('DELETE', '/api/vault/:id', vault.deleteItem)
 
+route('GET', '/api/links', shortlink.listLinks)
+route('POST', '/api/links', shortlink.createLink)
+route('PUT', '/api/links/:id', shortlink.updateLink)
+route('DELETE', '/api/links/:id', shortlink.deleteLink)
+
 async function handleApi(req: Request, env: Env, pathname: string) {
   let pathMatched = false
   for (const r of routes) {
@@ -73,10 +80,21 @@ async function handleApi(req: Request, env: Env, pathname: string) {
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const { pathname } = new URL(req.url)
     if (pathname === '/api' || pathname.startsWith('/api/'))
       return handleApi(req, env, pathname)
+    // 短链跳转：/s/<code>，允许末尾带一个斜杠
+    const short = pathname.match(/^\/s\/([^/]+)\/?$/)
+    if (short && (req.method === 'GET' || req.method === 'HEAD')) {
+      try {
+        return await shortlink.redirect(req, env, ctx, decodeURIComponent(short[1]))
+      }
+      catch (e) {
+        console.error(e)
+        return new Response('服务暂时不可用', { status: 500 })
+      }
+    }
     return env.ASSETS.fetch(req)
   },
 } satisfies ExportedHandler<Env>

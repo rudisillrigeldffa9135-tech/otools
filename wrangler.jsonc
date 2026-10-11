@@ -5,12 +5,12 @@
   "main": "worker/src/index.ts",
   "compatibility_date": "2026-09-01",
   "observability": { "enabled": true },
-  // H5 构建产物作为静态资源；只有 /api/* 先进入 Worker，其余请求直接命中静态资源
+  // H5 构建产物作为静态资源；只有 /api/*（接口）与 /s/*（短链跳转）先进入 Worker，其余请求直接命中静态资源
   "assets": {
     "directory": "./dist/build/h5",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/s/*"]
   },
   "d1_databases": [
     {

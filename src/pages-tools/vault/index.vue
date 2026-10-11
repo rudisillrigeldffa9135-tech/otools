@@ -1,8 +1,10 @@
 <script lang="ts" setup>
+import type { SiteGroup } from './utils'
 import type { IVaultForm, IVaultItem, IVaultSummary } from '@/api/vault'
 import dayjs from 'dayjs'
 import { createVaultItem, deleteVaultItem, getVaultItem, listVault, updateVaultItem } from '@/api/vault'
 import { copyText, getRandomInts, toast } from '@/utils/common'
+import { findDuplicate, groupBySite, hostOf, matchKeyword, normalizeUrl, passwordStrength } from './utils'
 
 definePage({
   style: { navigationBarTitleText: '密码管理' },
@@ -11,19 +13,15 @@ definePage({
 const list = ref<IVaultSummary[]>([])
 const loading = ref(false)
 const keyword = ref('')
-/** 已获取的明细（含密码），只保存在内存中 */
+/** 已获取的明细（含密码），只保存在内存中，离开页面即清空 */
 const details = reactive(new Map<number, IVaultItem>())
 const expandedId = ref<number>()
 const revealedIds = reactive(new Set<number>())
 /** 当前展开条目的明细（同一时间只展开一条） */
 const current = computed(() => (expandedId.value ? details.get(expandedId.value) : undefined))
 
-const filtered = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  if (!kw)
-    return list.value
-  return list.value.filter(item => [item.name, item.url, item.username].some(s => s.toLowerCase().includes(kw)))
-})
+const groups = computed(() => groupBySite(list.value.filter(i => matchKeyword(i, keyword.value))))
+const siteCount = computed(() => groupBySite(list.value).length)
 
 async function load() {
   loading.value = true
@@ -57,26 +55,28 @@ function toggleReveal(id: number) {
   revealedIds.has(id) ? revealedIds.delete(id) : revealedIds.add(id)
 }
 
+/** 列表行上直接复制密码：未加载过明细时先取明细 */
+async function copyPassword(id: number) {
+  try {
+    const item = await fetchDetail(id)
+    if (!item.password)
+      return toast('该账号没有保存密码')
+    copyText(item.password)
+  }
+  catch {
+    // 错误提示已由 http 层弹出
+  }
+}
+
 /* ---------------- 展示辅助 ---------------- */
 
 const AVATAR_COLORS = ['#4f6ef7', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#0ea5e9', '#ec4899', '#14b8a6']
 
-function avatarColor(name: string) {
+function avatarColor(key: string) {
   let h = 0
-  for (const ch of name)
+  for (const ch of key)
     h = (h * 31 + ch.charCodeAt(0)) >>> 0
   return AVATAR_COLORS[h % AVATAR_COLORS.length]
-}
-
-function normalizeUrl(url: string) {
-  if (!url)
-    return ''
-  return /^[a-z][\w+.-]*:\/\//i.test(url) ? url : `https://${url}`
-}
-
-function hostOf(url: string) {
-  const m = normalizeUrl(url).match(/^[a-z][\w+.-]*:\/\/([^/?#]+)/i)
-  return m ? m[1] : url
 }
 
 function formatTime(ts: number) {
@@ -91,6 +91,7 @@ function openUrl(url: string) {
     return
   }
   // #endif
+  // 小程序无法直接打开外部网页，复制后到浏览器中打开
   copyText(full)
 }
 
@@ -100,16 +101,39 @@ const showForm = ref(false)
 const saving = ref(false)
 const editingId = ref<number>()
 const showFormPassword = ref(false)
-const form = reactive<IVaultForm>({ name: '', url: '', username: '', password: '', notes: '' })
+const EMPTY_FORM: IVaultForm = { name: '', url: '', username: '', label: '', password: '', notes: '' }
+const form = reactive<IVaultForm>({ ...EMPTY_FORM })
+
+const strength = computed(() => passwordStrength(form.password))
+/** 同一网站下已有相同账号时提示（不阻止保存） */
+const duplicate = computed(() => findDuplicate(list.value, form, editingId.value))
+/** 新增时按输入的名称 / 网址提示已有网站，点击即可带入，保证同一网站归到同一组 */
+const siteSuggestions = computed(() => {
+  if (editingId.value)
+    return []
+  const name = form.name.trim().toLowerCase()
+  const host = hostOf(form.url)
+  if (!name && !host)
+    return []
+  return groupBySite(list.value)
+    .filter((g) => {
+      // 已经完全对上的网站不用再提示
+      if (g.name.toLowerCase() === name && (!host || !g.host || g.host === host))
+        return false
+      return (name && g.name.toLowerCase().includes(name)) || (host && g.host === host)
+    })
+    .slice(0, 4)
+})
 
 function resetForm(data?: Partial<IVaultForm>) {
-  Object.assign(form, { name: '', url: '', username: '', password: '', notes: '' }, data)
+  Object.assign(form, EMPTY_FORM, data)
 }
 
-function openCreate() {
+/** 新增账号；从某个网站分组进入时自动带上网站名称与网址 */
+function openCreate(group?: SiteGroup<IVaultSummary>) {
   editingId.value = undefined
   showFormPassword.value = false
-  resetForm()
+  resetForm(group ? { name: group.name, url: group.url } : undefined)
   showForm.value = true
 }
 
@@ -119,6 +143,12 @@ async function openEdit(id: number) {
   showFormPassword.value = false
   resetForm(item)
   showForm.value = true
+}
+
+function applySuggestion(group: SiteGroup<IVaultSummary>) {
+  form.name = group.name
+  if (group.url)
+    form.url = group.url
 }
 
 const CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+?'
@@ -134,7 +164,7 @@ async function save() {
     return toast('请填写网站名称')
   saving.value = true
   try {
-    const data = { ...form, name: form.name.trim(), url: form.url.trim() }
+    const data = { ...form, name: form.name.trim(), url: form.url.trim(), label: form.label.trim() }
     if (editingId.value) {
       await updateVaultItem(editingId.value, data)
       details.delete(editingId.value)
@@ -156,16 +186,22 @@ async function save() {
   }
 }
 
+function accountTitle(item: IVaultSummary) {
+  return item.username || '（未填写账号）'
+}
+
 function remove(item: IVaultSummary) {
   uni.showModal({
     title: '删除确认',
-    content: `确定删除「${item.name}」吗？删除后无法恢复。`,
+    content: `确定删除「${item.name}」的账号「${accountTitle(item)}」吗？删除后无法恢复。`,
     confirmColor: '#ef4444',
     success: async ({ confirm }) => {
       if (!confirm)
         return
       await deleteVaultItem(item.id)
       details.delete(item.id)
+      if (expandedId.value === item.id)
+        expandedId.value = undefined
       list.value = list.value.filter(i => i.id !== item.id)
       toast('已删除', 'success')
     },
@@ -179,14 +215,15 @@ function remove(item: IVaultSummary) {
       <view class="flex items-center gap-2">
         <view class="ot-vault__search">
           <view class="i-carbon-search text-15px text-muted" />
-          <input v-model="keyword" class="min-w-0 flex-1 text-14px" placeholder="搜索网站、网址或账号">
+          <input v-model="keyword" class="min-w-0 flex-1 text-14px" placeholder="搜索网站、网址、账号或备注名">
+          <view v-if="keyword" class="i-carbon-close cursor-pointer text-15px text-muted" @click="keyword = ''" />
         </view>
-        <wd-button icon="add" @click="openCreate">
+        <wd-button icon="add" @click="openCreate()">
           新增
         </wd-button>
       </view>
       <view class="mt-2 text-12px text-muted">
-        共 {{ list.length }} 条 · 密码与备注在服务端加密存储，仅本人账号可查看
+        {{ siteCount }} 个网站 · {{ list.length }} 个账号 · 密码与备注在服务端加密存储，仅本人可查看
       </view>
     </ot-panel>
 
@@ -194,79 +231,100 @@ function remove(item: IVaultSummary) {
       加载中…
     </view>
 
-    <ot-panel v-else-if="!filtered.length">
+    <ot-panel v-else-if="!groups.length">
       <view class="flex flex-col items-center gap-3 py-8">
         <view class="i-carbon-password text-40px text-muted" />
-        <text class="text-13px text-muted">{{ keyword ? '没有匹配的条目' : '还没有保存任何账号' }}</text>
-        <wd-button v-if="!keyword" size="small" plain @click="openCreate">
-          添加第一条
+        <text class="text-13px text-muted">{{ keyword ? '没有匹配的账号' : '还没有保存任何账号' }}</text>
+        <wd-button v-if="!keyword" size="small" plain @click="openCreate()">
+          添加第一个账号
         </wd-button>
       </view>
     </ot-panel>
 
-    <view v-for="item in filtered" :key="item.id" class="ot-vault__item">
-      <view class="flex cursor-pointer items-center gap-3" @click="toggleExpand(item)">
-        <view class="ot-vault__avatar" :style="{ backgroundColor: avatarColor(item.name) }">
-          {{ item.name.slice(0, 1).toUpperCase() }}
+    <view v-for="group in groups" :key="group.key" class="ot-vault__group">
+      <!-- 网站 -->
+      <view class="ot-vault__site">
+        <view class="ot-vault__avatar" :style="{ backgroundColor: avatarColor(group.key) }">
+          {{ group.name.slice(0, 1).toUpperCase() }}
         </view>
         <view class="min-w-0 flex-1">
-          <view class="truncate text-15px text-main font-500">
-            {{ item.name }}
+          <view class="flex items-center gap-1.5">
+            <text class="truncate text-15px text-main font-600">{{ group.name }}</text>
+            <text v-if="group.items.length > 1" class="ot-vault__count">{{ group.items.length }} 个账号</text>
           </view>
-          <view class="truncate text-12px text-muted">
-            {{ [item.username, item.url && hostOf(item.url)].filter(Boolean).join(' · ') || '—' }}
+          <view v-if="group.host || group.url" class="truncate text-12px text-muted">
+            {{ group.host || group.url }}
           </view>
         </view>
-        <view
-          v-if="item.username" class="i-carbon-user-follow shrink-0 p-1 text-17px text-muted"
-          title="复制账号" @click.stop="copyText(item.username)"
-        />
-        <view
-          class="shrink-0 text-18px text-muted transition-transform"
-          :class="expandedId === item.id ? 'i-carbon-chevron-up' : 'i-carbon-chevron-down'"
-        />
+        <view v-if="group.url" class="i-carbon-launch ot-vault__btn" title="打开网站" @click="openUrl(group.url)" />
+        <view class="ot-vault__add" @click="openCreate(group)">
+          <view class="i-carbon-add text-15px" />
+          <text>账号</text>
+        </view>
       </view>
 
-      <view v-if="expandedId === item.id" class="mt-3">
-        <view v-if="!current" class="py-3 text-center text-13px text-muted">
-          加载中…
+      <!-- 账号 -->
+      <view v-for="item in group.items" :key="item.id" class="ot-vault__account" :class="{ 'is-open': expandedId === item.id }">
+        <view class="flex cursor-pointer items-center gap-2" @click="toggleExpand(item)">
+          <view class="i-carbon-user-avatar shrink-0 text-17px text-muted" />
+          <view class="min-w-0 flex-1">
+            <view class="flex items-center gap-1.5">
+              <text class="truncate text-14px" :class="item.username ? 'text-main' : 'text-muted'">{{ accountTitle(item) }}</text>
+              <text v-if="item.label" class="ot-vault__label-tag">{{ item.label }}</text>
+            </view>
+            <!-- 同组内网站名称不一致时（如「GitHub 工作」）显示出来，便于区分 -->
+            <view v-if="item.name !== group.name" class="truncate text-12px text-muted">
+              {{ item.name }}
+            </view>
+          </view>
+          <view v-if="item.username" class="i-carbon-user-follow ot-vault__btn" title="复制账号" @click.stop="copyText(item.username)" />
+          <view class="i-carbon-password ot-vault__btn" title="复制密码" @click.stop="copyPassword(item.id)" />
+          <view class="shrink-0 text-17px text-muted" :class="expandedId === item.id ? 'i-carbon-chevron-up' : 'i-carbon-chevron-down'" />
         </view>
-        <template v-else>
-          <view class="ot-vault__row">
-            <text class="ot-vault__label">账号</text>
-            <text class="ot-mono min-w-0 flex-1 break-all" user-select selectable>{{ current.username || '—' }}</text>
-            <view class="i-carbon-copy ot-vault__btn" @click="copyText(current.username)" />
+
+        <view v-if="expandedId === item.id" class="mt-3">
+          <view v-if="!current" class="py-3 text-center text-13px text-muted">
+            加载中…
           </view>
-          <view class="ot-vault__row">
-            <text class="ot-vault__label">密码</text>
-            <text class="ot-mono min-w-0 flex-1 break-all" user-select selectable>
-              {{ revealedIds.has(item.id) ? (current.password || '—') : (current.password ? '••••••••••' : '—') }}
-            </text>
-            <view
-              class="ot-vault__btn" :class="revealedIds.has(item.id) ? 'i-carbon-view-off' : 'i-carbon-view'"
-              @click="toggleReveal(item.id)"
-            />
-            <view class="i-carbon-copy ot-vault__btn" @click="copyText(current.password)" />
-          </view>
-          <view v-if="item.url" class="ot-vault__row">
-            <text class="ot-vault__label">网址</text>
-            <text class="min-w-0 flex-1 break-all" user-select selectable>{{ item.url }}</text>
-            <view class="i-carbon-launch ot-vault__btn" @click="openUrl(item.url)" />
-          </view>
-          <view v-if="current.notes" class="ot-vault__row items-start!">
-            <text class="ot-vault__label">备注</text>
-            <text class="min-w-0 flex-1 whitespace-pre-wrap break-all" user-select selectable>{{ current.notes }}</text>
-          </view>
-          <view class="mt-3 flex items-center gap-2">
-            <text class="flex-1 text-12px text-muted">更新于 {{ formatTime(item.updatedAt) }}</text>
-            <wd-button size="small" type="info" plain @click="remove(item)">
-              删除
-            </wd-button>
-            <wd-button size="small" @click="openEdit(item.id)">
-              编辑
-            </wd-button>
-          </view>
-        </template>
+          <template v-else>
+            <view class="ot-vault__row">
+              <text class="ot-vault__row-label">账号</text>
+              <text class="ot-mono min-w-0 flex-1 break-all" user-select selectable>{{ current.username || '—' }}</text>
+              <view v-if="current.username" class="i-carbon-copy ot-vault__btn" @click="copyText(current.username)" />
+            </view>
+            <view class="ot-vault__row">
+              <text class="ot-vault__row-label">密码</text>
+              <text class="ot-mono min-w-0 flex-1 break-all" user-select selectable>
+                {{ revealedIds.has(item.id) ? (current.password || '—') : (current.password ? '••••••••••' : '—') }}
+              </text>
+              <template v-if="current.password">
+                <view
+                  class="ot-vault__btn" :class="revealedIds.has(item.id) ? 'i-carbon-view-off' : 'i-carbon-view'"
+                  @click="toggleReveal(item.id)"
+                />
+                <view class="i-carbon-copy ot-vault__btn" @click="copyText(current.password)" />
+              </template>
+            </view>
+            <view v-if="current.url" class="ot-vault__row">
+              <text class="ot-vault__row-label">网址</text>
+              <text class="min-w-0 flex-1 break-all" user-select selectable>{{ current.url }}</text>
+              <view class="i-carbon-launch ot-vault__btn" @click="openUrl(current.url)" />
+            </view>
+            <view v-if="current.notes" class="ot-vault__row ot-vault__row--top">
+              <text class="ot-vault__row-label">备注</text>
+              <text class="min-w-0 flex-1 whitespace-pre-wrap break-all" user-select selectable>{{ current.notes }}</text>
+            </view>
+            <view class="mt-3 flex items-center gap-2">
+              <text class="flex-1 text-12px text-muted">更新于 {{ formatTime(item.updatedAt) }}</text>
+              <wd-button size="small" type="info" plain @click="remove(item)">
+                删除
+              </wd-button>
+              <wd-button size="small" @click="openEdit(item.id)">
+                编辑
+              </wd-button>
+            </view>
+          </template>
+        </view>
       </view>
     </view>
 
@@ -275,27 +333,53 @@ function remove(item: IVaultSummary) {
       custom-style="width: 92vw; max-width: 480px; border-radius: 16px;"
     >
       <view class="ot-vault__form">
-        <view class="mb-4 text-16px text-main font-600">
+        <view class="mb-1 text-16px text-main font-600">
           {{ editingId ? '编辑账号' : '新增账号' }}
         </view>
+
         <view class="ot-vault__field-label">
           网站名称 <text class="text-red-500">*</text>
         </view>
         <view class="ot-vault__field">
           <input v-model="form.name" class="flex-1" placeholder="如：GitHub" :maxlength="100">
         </view>
+        <view v-if="siteSuggestions.length" class="mt-2 flex flex-wrap items-center gap-1.5">
+          <text class="text-12px text-muted">已有网站：</text>
+          <view v-for="g in siteSuggestions" :key="g.key" class="ot-vault__suggest" @click="applySuggestion(g)">
+            {{ g.name }}<text class="ml-1 text-muted">{{ g.items.length }}</text>
+          </view>
+        </view>
+
         <view class="ot-vault__field-label">
           网址
         </view>
         <view class="ot-vault__field">
-          <input v-model="form.url" class="flex-1" placeholder="如：https://github.com" :maxlength="500">
+          <input v-model="form.url" class="flex-1" placeholder="如：github.com（同一网址的账号会归为一组）" :maxlength="500">
         </view>
-        <view class="ot-vault__field-label">
-          账号
+
+        <view class="flex gap-3">
+          <view class="ot-vault__col-3 min-w-0">
+            <view class="ot-vault__field-label">
+              账号
+            </view>
+            <view class="ot-vault__field">
+              <input v-model="form.username" class="min-w-0 flex-1" placeholder="用户名 / 邮箱 / 手机号" :maxlength="200">
+            </view>
+          </view>
+          <view class="ot-vault__col-2 min-w-0">
+            <view class="ot-vault__field-label">
+              账号备注名
+            </view>
+            <view class="ot-vault__field">
+              <input v-model="form.label" class="min-w-0 flex-1" placeholder="如：工作号" :maxlength="30">
+            </view>
+          </view>
         </view>
-        <view class="ot-vault__field">
-          <input v-model="form.username" class="flex-1" placeholder="用户名 / 邮箱 / 手机号" :maxlength="200">
+        <view v-if="duplicate" class="ot-vault__warn">
+          <view class="i-carbon-warning-alt shrink-0 text-15px" />
+          <text>该网站下已有账号「{{ duplicate.username }}」{{ duplicate.label ? `（${duplicate.label}）` : '' }}，仍可继续保存。</text>
         </view>
+
         <view class="ot-vault__field-label">
           密码
         </view>
@@ -310,6 +394,16 @@ function remove(item: IVaultSummary) {
           />
           <view class="i-carbon-renew ot-vault__btn" title="生成随机密码" @click="generatePassword" />
         </view>
+        <view v-if="form.password" class="mt-2 flex items-center gap-2">
+          <view class="ot-vault__meter">
+            <view
+              v-for="n in 3" :key="n" class="ot-vault__meter-bar"
+              :style="{ background: n <= strength.level ? strength.color : '' }"
+            />
+          </view>
+          <text class="text-12px" :style="{ color: strength.color }">强度：{{ strength.text }}</text>
+        </view>
+
         <view class="ot-vault__field-label">
           备注
         </view>
@@ -346,11 +440,18 @@ function remove(item: IVaultSummary) {
   color: var(--ot-text);
 }
 
-.ot-vault__item {
-  padding: 14px 16px;
+.ot-vault__group {
   border-radius: 14px;
   background: var(--ot-card);
   border: 1px solid var(--ot-border);
+  overflow: hidden;
+}
+
+.ot-vault__site {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
 }
 
 .ot-vault__avatar {
@@ -364,6 +465,57 @@ function remove(item: IVaultSummary) {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.ot-vault__count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--wot-color-theme);
+  background: rgba(79, 110, 247, 0.1);
+}
+
+.ot-vault__add {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--wot-color-theme);
+  background: rgba(79, 110, 247, 0.08);
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(79, 110, 247, 0.16);
+  }
+}
+
+.ot-vault__account {
+  padding: 10px 16px 10px 20px;
+  border-top: 1px solid var(--ot-border);
+
+  &.is-open {
+    background: color-mix(in srgb, var(--ot-fill) 45%, transparent);
+    padding-bottom: 14px;
+  }
+}
+
+.ot-vault__label-tag {
+  flex-shrink: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 18px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.14);
 }
 
 .ot-vault__row {
@@ -381,7 +533,11 @@ function remove(item: IVaultSummary) {
   }
 }
 
-.ot-vault__label {
+.ot-vault__row--top {
+  align-items: flex-start;
+}
+
+.ot-vault__row-label {
   flex-shrink: 0;
   width: 40px;
   color: var(--ot-text-3);
@@ -428,5 +584,52 @@ function remove(item: IVaultSummary) {
     width: 100%;
     font-size: 14px;
   }
+}
+
+.ot-vault__col-3 {
+  flex: 3;
+}
+
+.ot-vault__col-2 {
+  flex: 2;
+}
+
+.ot-vault__suggest {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--ot-text);
+  border: 1px solid var(--ot-border);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--wot-color-theme);
+    color: var(--wot-color-theme);
+  }
+}
+
+.ot-vault__warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.ot-vault__meter {
+  display: flex;
+  gap: 4px;
+  width: 120px;
+}
+
+.ot-vault__meter-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ot-border);
 }
 </style>
