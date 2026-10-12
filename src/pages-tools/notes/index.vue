@@ -3,6 +3,7 @@ import type { INoteListItem, ShareTtl } from '@/api/notes'
 import dayjs from 'dayjs'
 import { createNote, deleteNote, getNote, listNotes, shareNote, unshareNote, updateNote } from '@/api/notes'
 import { copyText, toast } from '@/utils/common'
+import { userKey } from '@/utils/user-storage'
 import { getPageUrl } from '@/utils/site'
 import QrView from '../qrcode/components/qr-view.vue'
 import MdView from './components/md-view.vue'
@@ -132,13 +133,13 @@ function writeDraft() {
   if (!c)
     return
   try {
-    uni.setStorageSync(DRAFT_KEY, { id: c.id, content: c.content, version: c.version, at: Date.now() } satisfies Draft)
+    uni.setStorageSync(userKey(DRAFT_KEY), { id: c.id, content: c.content, version: c.version, at: Date.now() } satisfies Draft)
   }
   catch {}
 }
 function clearDraft() {
   try {
-    uni.removeStorageSync(DRAFT_KEY)
+    uni.removeStorageSync(userKey(DRAFT_KEY))
   }
   catch {}
 }
@@ -533,7 +534,7 @@ function onResize() {
 
 onLoad(async (query) => {
   try {
-    const draft = uni.getStorageSync(DRAFT_KEY) as Draft | ''
+    const draft = uni.getStorageSync(userKey(DRAFT_KEY)) as Draft | ''
     if (draft && draft.content)
       pendingDraft.value = draft
   }

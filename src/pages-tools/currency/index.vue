@@ -3,6 +3,7 @@ import type { IRates } from '@/api/lookup'
 import dayjs from 'dayjs'
 import { getRates } from '@/api/lookup'
 import { copyText, toast } from '@/utils/common'
+import { userKey } from '@/utils/user-storage'
 import { convert, currencyName, DEFAULT_FAVORITES, formatAmount } from './currencies'
 
 definePage({
@@ -20,10 +21,10 @@ const base = ref('CNY')
 const favorites = ref<string[]>([...DEFAULT_FAVORITES])
 
 try {
-  const fav = uni.getStorageSync(FAV_KEY)
+  const fav = uni.getStorageSync(userKey(FAV_KEY))
   if (Array.isArray(fav) && fav.length)
     favorites.value = fav
-  const b = uni.getStorageSync(BASE_KEY)
+  const b = uni.getStorageSync(userKey(BASE_KEY))
   if (typeof b === 'string' && b)
     base.value = b
 }
@@ -31,8 +32,8 @@ catch {}
 
 function persist() {
   try {
-    uni.setStorageSync(FAV_KEY, favorites.value)
-    uni.setStorageSync(BASE_KEY, base.value)
+    uni.setStorageSync(userKey(FAV_KEY), favorites.value)
+    uni.setStorageSync(userKey(BASE_KEY), base.value)
   }
   catch {}
 }

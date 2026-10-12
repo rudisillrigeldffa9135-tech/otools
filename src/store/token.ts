@@ -13,6 +13,7 @@ import {
 } from '@/api/login'
 import { isDoubleTokenRes, isSingleTokenRes } from '@/api/types/login'
 import { isDoubleTokenMode } from '@/utils'
+import { clearUserLocalData } from '@/utils/user-storage'
 import { useUserStore } from './user'
 
 // 初始化状态
@@ -192,6 +193,8 @@ export const useTokenStore = defineStore(
         tokenInfo.value = { ...tokenInfoState }
         uni.removeStorageSync('token')
         const userStore = useUserStore()
+        // 清掉本机上该用户的个人内容（便签草稿、查询记录等），避免下一个登录的人看到
+        clearUserLocalData(userStore.userInfo.userId)
         userStore.clearUserInfo()
       }
     }

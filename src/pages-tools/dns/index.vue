@@ -2,6 +2,7 @@
 import type { DnsResolver, IDnsLookup } from '@/api/dns'
 import { dnsLookup } from '@/api/dns'
 import { copyText, toast } from '@/utils/common'
+import { userKey } from '@/utils/user-storage'
 
 definePage({
   style: { navigationBarTitleText: 'DNS 查询' },
@@ -51,7 +52,7 @@ const history = ref<string[]>([])
 
 onLoad((query) => {
   try {
-    history.value = uni.getStorageSync(HISTORY_KEY) || []
+    history.value = uni.getStorageSync(userKey(HISTORY_KEY)) || []
   }
   catch {}
   if (query?.name) {
@@ -78,7 +79,7 @@ function toggleType(t: string) {
 function saveHistory(n: string) {
   history.value = [n, ...history.value.filter(h => h !== n)].slice(0, 8)
   try {
-    uni.setStorageSync(HISTORY_KEY, history.value)
+    uni.setStorageSync(userKey(HISTORY_KEY), history.value)
   }
   catch {}
 }
@@ -86,7 +87,7 @@ function saveHistory(n: string) {
 function clearHistory() {
   history.value = []
   try {
-    uni.removeStorageSync(HISTORY_KEY)
+    uni.removeStorageSync(userKey(HISTORY_KEY))
   }
   catch {}
 }

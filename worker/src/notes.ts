@@ -136,7 +136,7 @@ export async function updateNote(req: Request, env: Env, params: Record<string, 
   const t = now()
 
   if (typeof body.pinned === 'boolean' && body.content === undefined) {
-    const updated = await env.DB.prepare('UPDATE notes SET pinned = ? WHERE id = ? RETURNING *').bind(body.pinned ? 1 : 0, id).first<NoteRow>()
+    const updated = await env.DB.prepare('UPDATE notes SET pinned = ? WHERE id = ? AND user_id = ? RETURNING *').bind(body.pinned ? 1 : 0, id, user.id).first<NoteRow>()
     return meta(updated!)
   }
 
@@ -147,8 +147,8 @@ export async function updateNote(req: Request, env: Env, params: Record<string, 
   // 条件更新：并发保存时只有一个能成功
   const updated = await env.DB.prepare(
     `UPDATE notes SET data = ?, size = ?, version = version + 1, updated_at = ?${typeof body.pinned === 'boolean' ? ', pinned = ?' : ''}
-      WHERE id = ? AND version = ? RETURNING *`,
-  ).bind(...[await encrypt(env, user.id, content), content.length, t, ...(typeof body.pinned === 'boolean' ? [body.pinned ? 1 : 0] : []), id, row.version]).first<NoteRow>()
+      WHERE id = ? AND user_id = ? AND version = ? RETURNING *`,
+  ).bind(...[await encrypt(env, user.id, content), content.length, t, ...(typeof body.pinned === 'boolean' ? [body.pinned ? 1 : 0] : []), id, user.id, row.version]).first<NoteRow>()
   if (!updated)
     throw new ApiError(409, '这条便签已在其他设备上修改过')
   return { ...meta(updated), title: deriveTitle(content) }
@@ -194,8 +194,8 @@ export async function shareNote(req: Request, env: Env, params: Record<string, s
     throw new ApiError(400, '有效期不正确')
   const row = await getRow(env, user.id, id)
   const code = !isShareActive(row) || body.renew === true ? randomShareCode() : row.share_code!
-  const updated = await env.DB.prepare('UPDATE notes SET share_code = ?, share_expires_at = ? WHERE id = ? RETURNING *')
-    .bind(code, ttl ? now() + ttl : 0, id)
+  const updated = await env.DB.prepare('UPDATE notes SET share_code = ?, share_expires_at = ? WHERE id = ? AND user_id = ? RETURNING *')
+    .bind(code, ttl ? now() + ttl : 0, id, user.id)
     .first<NoteRow>()
   return meta(updated!)
 }
@@ -204,7 +204,7 @@ export async function unshareNote(req: Request, env: Env, params: Record<string,
   const user = await requireUser(req, env)
   const id = parseId(params.id)
   await getRow(env, user.id, id)
-  const updated = await env.DB.prepare('UPDATE notes SET share_code = NULL, share_expires_at = 0 WHERE id = ? RETURNING *').bind(id).first<NoteRow>()
+  const updated = await env.DB.prepare('UPDATE notes SET share_code = NULL, share_expires_at = 0 WHERE id = ? AND user_id = ? RETURNING *').bind(id, user.id).first<NoteRow>()
   return meta(updated!)
 }
 
