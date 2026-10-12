@@ -34,7 +34,13 @@ async function load() {
   }
 }
 
-onLoad(load)
+// 从密码体检跳转过来时直接打开对应条目的编辑框
+onLoad(async (query) => {
+  await load()
+  const id = Number(query?.edit)
+  if (id)
+    openEdit(id)
+})
 
 /* ---------------- 两步验证码 ---------------- */
 
@@ -210,6 +216,10 @@ function openCreate(group?: SiteGroup<IVaultSummary>) {
   showForm.value = true
 }
 
+function toHealth() {
+  uni.navigateTo({ url: '/pages-tools/vaultcheck/index' })
+}
+
 async function openEdit(id: number) {
   const item = await fetchDetail(id)
   editingId.value = id
@@ -299,6 +309,7 @@ function remove(item: IVaultSummary) {
       </view>
       <view class="mt-2 text-12px text-muted">
         {{ siteCount }} 个网站 · {{ list.length }} 个账号 · 密码与备注在服务端加密存储，仅本人可查看
+        <text v-if="list.length" class="ml-1 cursor-pointer text-[var(--wot-color-theme)]" @click="toHealth">· 密码体检</text>
       </view>
     </ot-panel>
 

@@ -70,7 +70,25 @@ export async function sha256Hex(text: string) {
  * 由主密钥（VAULT_KEY，base64 编码的 32 字节）经 HKDF 为每个用户派生独立的 AES-GCM 密钥，
  * 某个用户的密文即便被搬到另一个用户名下也无法解密。
  */
-async function deriveVaultKey(masterKeyB64: string, userId: number) {
+const keyCache = new Map<string, Promise<CryptoKey>>()
+const KEY_CACHE_SIZE = 200
+
+/** 同一个 Worker 实例内缓存派生出的密钥，批量解密（列表、密码体检）时不必每条都重新派生 */
+function deriveVaultKey(masterKeyB64: string, userId: number) {
+  const cacheKey = `${userId}:${masterKeyB64}`
+  let key = keyCache.get(cacheKey)
+  if (!key) {
+    key = deriveVaultKeyUncached(masterKeyB64, userId)
+    // 派生失败（如 VAULT_KEY 配置错误）不缓存
+    key.catch(() => keyCache.delete(cacheKey))
+    if (keyCache.size >= KEY_CACHE_SIZE)
+      keyCache.delete(keyCache.keys().next().value!)
+    keyCache.set(cacheKey, key)
+  }
+  return key
+}
+
+async function deriveVaultKeyUncached(masterKeyB64: string, userId: number) {
   let raw: Uint8Array
   try {
     raw = fromBase64(masterKeyB64 || '')

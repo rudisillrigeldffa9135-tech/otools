@@ -13,6 +13,10 @@ export interface INoteMeta {
   updatedAt: number
   /** 由正文第一行推导 */
   title: string
+  /** 分享码，未分享为 null */
+  shareCode: string | null
+  /** 分享到期时间（秒），0 为永久 */
+  shareExpiresAt: number
 }
 
 export interface INoteListItem extends INoteMeta {
@@ -50,4 +54,28 @@ export function updateNote(id: number, data: ISaveNoteForm, options?: Partial<Cu
 
 export function deleteNote(id: number) {
   return http.delete<null>(`/notes/${id}`)
+}
+
+/** 分享有效期（秒），0 为永久 */
+export type ShareTtl = 0 | 86400 | 604800 | 2592000
+
+export function shareNote(id: number, expiresIn: ShareTtl, renew = false) {
+  return http.post<INoteMeta>(`/notes/${id}/share`, { expiresIn, renew })
+}
+
+export function unshareNote(id: number) {
+  return http.delete<INoteMeta>(`/notes/${id}/share`)
+}
+
+export interface ISharedNote {
+  title: string
+  content: string
+  updatedAt: number
+  /** 0 为永久 */
+  shareExpiresAt: number
+}
+
+/** 公开访问，无需登录 */
+export function getSharedNote(code: string) {
+  return http.get<ISharedNote>(`/shared/notes/${encodeURIComponent(code)}`, undefined, undefined, { hideErrorToast: true })
 }

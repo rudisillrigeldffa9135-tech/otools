@@ -1,19 +1,23 @@
 /**
  * OTools Cloudflare Worker 入口
- * - /api/*：认证、用户管理、密码库、短链、文本快传、便签、我的 IP、DNS 查询等接口（D1 存储）
+ * - /api/*：认证、用户管理、密码库、短链、文本 / 文件快传、便签、我的 IP、DNS、汇率、域名注册信息等接口（D1 + R2 存储）
  * - /s/:code：短链跳转
  * - 其余请求：交给静态资源（H5 构建产物 dist/build/h5），见 wrangler.jsonc 的 assets 配置
+ * - 定时任务（wrangler.jsonc 的 triggers.crons）：清理过期的文件、快传、限流记录与会话
  */
 import type { Env } from './lib'
 import * as admin from './admin'
 import * as auth from './auth'
 import * as dns from './dns'
-import { ApiError, fail, ok } from './lib'
+import * as files from './files'
+import { ApiError, fail, now, ok } from './lib'
 import * as network from './network'
 import * as notes from './notes'
 import * as paste from './paste'
+import * as rates from './rates'
 import * as shortlink from './shortlink'
 import * as vault from './vault'
+import * as whois from './whois'
 
 type Handler = (req: Request, env: Env, params: Record<string, string>) => Promise<unknown>
 
@@ -51,6 +55,9 @@ route('DELETE', '/api/admin/users/:id', admin.deleteUser)
 
 route('GET', '/api/vault', vault.listItems)
 route('POST', '/api/vault', vault.createItem)
+// 固定路径要排在 /:id 之前
+route('GET', '/api/vault/health', vault.health)
+route('POST', '/api/vault/breach', vault.breach)
 route('GET', '/api/vault/:id', vault.getItem)
 route('PUT', '/api/vault/:id', vault.updateItem)
 route('DELETE', '/api/vault/:id', vault.deleteItem)
@@ -65,9 +72,21 @@ route('POST', '/api/notes', notes.createNote)
 route('GET', '/api/notes/:id', notes.getNote)
 route('PUT', '/api/notes/:id', notes.updateNote)
 route('DELETE', '/api/notes/:id', notes.deleteNote)
+route('POST', '/api/notes/:id/share', notes.shareNote)
+route('DELETE', '/api/notes/:id/share', notes.unshareNote)
+route('GET', '/api/shared/notes/:code', notes.getSharedNote)
 
 route('GET', '/api/ip', network.myIp)
 route('GET', '/api/dns', dns.lookup)
+
+route('GET', '/api/files', files.listFiles)
+route('POST', '/api/files', files.uploadFile)
+route('GET', '/api/files/:code', files.getFileInfo)
+route('GET', '/api/files/:code/download', files.downloadFile)
+route('DELETE', '/api/files/:code', files.deleteFile)
+
+route('GET', '/api/rates', rates.getRates)
+route('GET', '/api/whois', whois.whois)
 
 route('GET', '/api/pastes', paste.listPastes)
 route('POST', '/api/pastes', paste.createPaste)
@@ -85,7 +104,9 @@ async function handleApi(req: Request, env: Env, pathname: string) {
       continue
     const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]))
     try {
-      return ok(await r.handler(req, env, params))
+      const result = await r.handler(req, env, params)
+      // 文件下载等接口直接返回 Response
+      return result instanceof Response ? result : ok(result)
     }
     catch (e) {
       if (e instanceof ApiError)
@@ -97,7 +118,26 @@ async function handleApi(req: Request, env: Env, pathname: string) {
   return pathMatched ? fail(405, '请求方法不支持') : fail(404, '接口不存在')
 }
 
+/** 定时清理：过期文件（含 R2 对象）、快传、限流计数、缓存与会话 */
+async function cleanup(env: Env) {
+  const t = now()
+  const removedFiles = await files.cleanupExpiredFiles(env)
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM pastes WHERE expires_at <= ?').bind(t),
+    env.DB.prepare('DELETE FROM rate_limits WHERE reset_at <= ?').bind(t),
+    // 缓存过期后仍保留一天，供上游故障时兜底
+    env.DB.prepare('DELETE FROM cache WHERE expires_at <= ?').bind(t - 86400),
+    env.DB.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(t),
+  ])
+  if (removedFiles)
+    console.log(`定时清理：删除过期文件 ${removedFiles} 个`)
+}
+
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(cleanup(env))
+  },
+
   async fetch(req, env, ctx) {
     const { pathname } = new URL(req.url)
     if (pathname === '/api' || pathname.startsWith('/api/'))

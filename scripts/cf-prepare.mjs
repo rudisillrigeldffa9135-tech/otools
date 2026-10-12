@@ -2,7 +2,8 @@
 //
 // 1. D1：wrangler.jsonc 里 database_id 还是占位符时，按 database_name 查找远程数据库，
 //    不存在则自动创建，并把真实 ID 写回 wrangler.jsonc（只改 CI 工作区，不会提交回仓库）
-// 2. VAULT_KEY：仅当 Worker 上还没有这个 secret 时（首次部署），把环境变量 VAULT_KEY
+// 2. R2：见 ensureR2
+// 3. VAULT_KEY：仅当 Worker 上还没有这个 secret 时（首次部署），把环境变量 VAULT_KEY
 //    写成 secrets 文件交给 `wrangler deploy --secrets-file`。已存在时绝不覆盖——
 //    更换 VAULT_KEY 会导致已保存的密码全部无法解密。
 //
@@ -77,6 +78,54 @@ function ensureD1() {
   console.log(`D1：使用数据库 ${name} (${db.uuid})`)
 }
 
+const LIFECYCLE_RULE = 'expire-after-8-days'
+
+/** 去掉 R2 绑定（只改 CI 工作区），文件快传接口会提示未开通 */
+function dropR2Binding(reason) {
+  const config = fs.readFileSync(CONFIG, 'utf8')
+  fs.writeFileSync(CONFIG, config.replace(/\s*"r2_buckets"\s*:\s*\[[\s\S]*?\],/, ''))
+  console.log(`::warning::文件快传不可用：${reason}。本次部署不绑定 R2，其余功能不受影响`)
+}
+
+/**
+ * 3. R2：存储桶不存在时自动创建，并加一条「对象 8 天后自动删除」的生命周期规则，
+ *    作为定时清理之外的兜底（文件最长有效期 7 天）。账户未开通 R2 或 Token 没有 R2 权限时不阻断部署。
+ */
+function ensureR2() {
+  const config = fs.readFileSync(CONFIG, 'utf8')
+  const bucket = readField(config, 'bucket_name')
+  if (!bucket)
+    return
+  const output = e => `${e.stdout || ''}${e.stderr || ''}`.trim() || e.message
+  try {
+    wrangler(['r2', 'bucket', 'info', bucket])
+    console.log(`R2：使用存储桶 ${bucket}`)
+  }
+  catch {
+    try {
+      wrangler(['r2', 'bucket', 'create', bucket])
+      console.log(`R2：已创建存储桶 ${bucket}`)
+    }
+    catch (e) {
+      const msg = output(e)
+      if (/10042|enable R2/i.test(msg))
+        return dropR2Binding('账户尚未开通 R2，请在 Cloudflare 控制台 R2 页面开通（免费额度 10 GB）后重新部署')
+      return dropR2Binding(`无法创建 R2 存储桶（请确认 API Token 有 Workers R2 Storage 编辑权限）：${msg.split('\n').slice(-3).join(' ')}`)
+    }
+  }
+  try {
+    const rules = wrangler(['r2', 'bucket', 'lifecycle', 'list', bucket])
+    if (!rules.includes(LIFECYCLE_RULE)) {
+      wrangler(['r2', 'bucket', 'lifecycle', 'add', bucket, LIFECYCLE_RULE, '--expire-days', '8', '--force'])
+      console.log('R2：已添加生命周期规则（对象 8 天后自动删除）')
+    }
+  }
+  catch (e) {
+    // 规则只是兜底，失败不影响部署
+    console.log(`::warning::设置 R2 生命周期规则失败：${output(e).split('\n').slice(-2).join(' ')}`)
+  }
+}
+
 function hasVaultKey() {
   try {
     const secrets = JSON.parse(wrangler(['secret', 'list', '--format', 'json']))
@@ -117,4 +166,5 @@ if (!process.env.CLOUDFLARE_API_TOKEN || !process.env.CLOUDFLARE_ACCOUNT_ID)
   fail('缺少 CLOUDFLARE_API_TOKEN 或 CLOUDFLARE_ACCOUNT_ID')
 
 ensureD1()
+ensureR2()
 prepareSecrets()

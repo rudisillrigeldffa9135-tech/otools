@@ -10,9 +10,12 @@ export const LOGIN_PAGE = '/pages/login/index'
 
 /** 文本快传：未登录也能凭取件码提取（发送、查看自己的快传仍需登录） */
 export const PASTE_PAGE = '/pages-tools/paste/index'
+/** 文件快传与便签分享页同理：凭取件码 / 分享链接免登录访问 */
+export const FILEDROP_PAGE = '/pages-tools/filedrop/index'
+export const NOTE_SHARE_PAGE = '/pages-tools/notes/share'
 
 /** 无需登录即可访问的页面 */
-const PUBLIC_PAGES = [LOGIN_PAGE, PASTE_PAGE]
+const PUBLIC_PAGES = [LOGIN_PAGE, PASTE_PAGE, FILEDROP_PAGE, NOTE_SHARE_PAGE]
 const ADMIN_PREFIX = '/pages-admin/'
 
 export function isLoggedIn() {

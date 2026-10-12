@@ -21,6 +21,13 @@
       "migrations_dir": "worker/migrations"
     }
   ],
+  // 文件快传的存储桶。部署脚本 scripts/cf-prepare.mjs 会自动创建并设置 8 天自动过期的生命周期规则；
+  // 账户未开通 R2 时脚本会在 CI 工作区去掉这段绑定，其余功能照常部署
+  "r2_buckets": [
+    { "binding": "FILES", "bucket_name": "otools-files" }
+  ],
+  // 每 15 分钟清理一次过期的文件（含 R2 对象）、快传、限流记录与会话
+  "triggers": { "crons": ["*/15 * * * *"] },
   "vars": {
     // 'true' 时开放自助注册（注册的都是普通用户）
     "ALLOW_REGISTER": "false",

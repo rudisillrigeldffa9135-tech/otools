@@ -51,3 +51,28 @@ export function updateVaultItem(id: number, data: IVaultForm) {
 export function deleteVaultItem(id: number) {
   return http.delete<null>(`/vault/${id}`)
 }
+
+/** 密码体检的单条结果（不含密码本身） */
+export interface IVaultHealthItem extends IVaultSummary {
+  /** 没有填写密码 */
+  empty: boolean
+  /** 强度 0 极弱 ~ 4 很强 */
+  level: 0 | 1 | 2 | 3 | 4
+  reasons: string[]
+  /** 与本条密码相同的其他条目 ID */
+  reusedWith: number[]
+  /** 相同密码的分组编号，0 表示没有重复 */
+  reuseGroup: number
+  /** 密码最后修改时间（秒） */
+  passwordUpdatedAt: number
+  passwordAgeDays: number
+}
+
+export function getVaultHealth() {
+  return http.get<{ checkedAt: number, items: IVaultHealthItem[] }>('/vault/health')
+}
+
+/** 泄露检查：返回 { [id]: 在泄露数据中出现的次数 }，每次最多 40 条 */
+export function checkVaultBreach(ids: number[]) {
+  return http.post<Record<string, number>>('/vault/breach', { ids }, undefined, undefined, { hideErrorToast: true })
+}

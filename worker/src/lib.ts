@@ -7,6 +7,8 @@ export interface Env {
   ALLOW_REGISTER?: string
   /** 密码哈希的 PBKDF2 迭代次数，免费套餐 CPU 超限（错误 1102）时可调低，最大 100000 */
   PBKDF2_ITERATIONS?: string
+  /** 文件快传的存储桶（R2）；账户未开通 R2 时部署脚本会去掉这个绑定，相关接口返回 503 */
+  FILES?: R2Bucket
 }
 
 export type Role = 'admin' | 'user'

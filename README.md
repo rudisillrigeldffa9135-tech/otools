@@ -8,9 +8,11 @@
 - 登录后使用（文本快传的取件除外），管理员 / 普通用户两种角色，管理员可管理用户
 - 密码管理：按网站分组管理账号密码与两步验证码（TOTP），支持同一网站多个账号，服务端 AES-GCM 加密存储
 - 短链接：自定义后缀、有效期、点击统计，可一键生成带备注的二维码
-- Markdown 便签：随写随存、多设备同步，代码高亮、行号、一键复制，冲突自动检测
+- Markdown 便签：随写随存、多设备同步，代码高亮、行号、一键复制，冲突自动检测，可生成只读分享链接
+- 文件快传：取件码免登录下载，阅后即焚，到期自动删除（R2 存储 + 定时清理）
+- 密码体检：弱密码、重复使用、长期未换与泄露检查（k-匿名，不外传密码）
 - 文本快传：多设备间互传文字，取件码分享（取件无需登录，猜错取件码按 IP 限流），可设阅后即焚与有效期
-- 除密码管理、短链接、文本快传、便签、我的 IP、DNS 查询外，其余工具纯前端运行，数据不出本地
+- 除密码管理与体检、短链接、文本 / 文件快传、便签、我的 IP、DNS / 域名查询、汇率外，其余工具纯前端运行，数据不出本地
 - 可整站部署到 Cloudflare Workers（静态资源 + API + D1 数据库）
 - 收藏、最近使用（本地持久化），小程序全局分享
 
@@ -20,13 +22,13 @@
 
 | 分类 | 工具 |
 | --- | --- |
-| 账号安全 | 密码管理（按网站分组，支持多账号与两步验证码，数据加密同步） |
+| 账号安全 | 密码管理（按网站分组，支持多账号与两步验证码，数据加密同步）、密码体检 |
 | 开发调试 | JSON 格式化、时间戳转换、JWT 解析、正则测试、文本对比、Cron 表达式（Linux / Spring / Quartz） |
 | 编码加密 | Base64 编解码、URL 编解码、哈希计算（MD5/SHA/HMAC）、对称加密（AES / DES / 3DES，兼容 OpenSSL）、字符转义（HTML / Unicode / JS / JSON / 正则 / SQL / XML） |
 | 文本处理 | Markdown 便签、字数统计、命名格式转换、文本批处理、人民币大写、文本快传 |
 | 图片处理 | 图片压缩（批量、格式转换、调整尺寸）、二维码识别（自动解析网址、Wi-Fi、名片等）、图片取色（H5 / 小程序） |
-| 网络工具 | 我的 IP、DNS 查询（Cloudflare / Google / 阿里 DNS） |
-| 生活实用 | 房贷计算器（等额本息 / 本金、组合贷、提前还款）、日期计算（万年历、农历、工作日含法定节假日）、单位换算 |
+| 网络工具 | 我的 IP、DNS 查询（Cloudflare / Google / 阿里 DNS）、域名查询（RDAP，含 IP 段归属）、文件快传 |
+| 生活实用 | 房贷计算器（等额本息 / 本金、组合贷、提前还款）、个税计算器（累计预扣、年终奖计税对比）、日期计算（万年历、农历、工作日含法定节假日）、汇率换算、单位换算 |
 | 格式转换 | 进制转换（大整数）、颜色转换 |
 | 生成工具 | 二维码生成（可加文字备注）、短链接、随机密码、UUID |
 
@@ -67,7 +69,8 @@ pnpm worker:dev
 ## 部署到 Cloudflare Workers
 
 整个站点（H5 静态资源 + `/api` 接口 + `/s/<短码>` 短链跳转）部署为一个 Worker：静态资源由 Workers Static Assets 托管，
-只有 `/api/*` 和 `/s/*` 会进入 Worker 代码，数据存在 D1。配置见 [wrangler.jsonc](wrangler.jsonc)。
+只有 `/api/*` 和 `/s/*` 会进入 Worker 代码，数据存在 D1，文件快传的文件存在 R2。配置见 [wrangler.jsonc](wrangler.jsonc)。
+每 15 分钟运行一次定时任务（Cron Trigger），清理过期的文件、快传、限流记录与会话。
 
 1. 登录 Cloudflare：`pnpm exec wrangler login`
 2. 创建 D1 数据库，把输出的 `database_id` 填入 `wrangler.jsonc`：`pnpm exec wrangler d1 create otools`
@@ -79,14 +82,14 @@ pnpm worker:dev
 ### 自动部署（GitHub Actions）
 
 推送到 `main` 分支后，[.github/workflows/deploy-cloudflare.yml](.github/workflows/deploy-cloudflare.yml) 会自动执行：
-安装依赖 → 构建 H5 → 测试 → 准备 D1 与密钥 → 数据库迁移 → `wrangler deploy`。
+安装依赖 → 构建 H5 → 测试 → 准备 D1、R2 与密钥 → 数据库迁移 → `wrangler deploy`。
 也可以在仓库的 Actions 页面手动运行。走自动部署时，上面的手动步骤 2~5 都不需要做。
 
 一次性配置：在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中添加 3 个 Repository secrets：
 
 | Secret | 说明 |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | 在 Cloudflare 控制台「我的个人资料 → API 令牌」创建：用「编辑 Cloudflare Workers」模板，再额外添加 **账户 → D1 → 编辑** 权限 |
+| `CLOUDFLARE_API_TOKEN` | 在 Cloudflare 控制台「我的个人资料 → API 令牌」创建：用「编辑 Cloudflare Workers」模板，再额外添加 **账户 → D1 → 编辑** 权限（模板已含 Workers R2 存储编辑权限，没有的话请一并添加） |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 控制台「Workers 和 Pages」页面右侧的账户 ID |
 | `VAULT_KEY` | 密码库主密钥，base64 编码的 32 字节随机数，生成方式见 `.dev.vars.example`。请另外妥善备份 |
 
@@ -94,6 +97,7 @@ pnpm worker:dev
 - `wrangler.jsonc` 中的 `database_id` 保持占位符即可：部署脚本 [scripts/cf-prepare.mjs](scripts/cf-prepare.mjs) 会按名称查找远程 D1 数据库，不存在就自动创建（只改 CI 工作区，不会提交回仓库）。如果你已经手动创建并填好了 ID，则直接使用
 - `VAULT_KEY` 只在 Worker 上还没有这个 secret 时（首次部署）写入，之后的部署**不会覆盖**，避免误改导致已保存的密码无法解密。确实要更换只能手动处理，且旧数据将无法解密
 - 新的 Cloudflare 账户需要先在控制台打开一次「Workers 和 Pages」，注册 `workers.dev` 子域，否则首次部署会失败
+- 文件快传需要账户开通 R2（Cloudflare 控制台 → R2，免费额度 10 GB，开通时需绑定付款方式）。部署脚本会自动创建存储桶 `otools-files`，并添加「对象 8 天后自动删除」的生命周期规则作为兜底；**未开通 R2 时照常部署**，只是文件快传会提示不可用，开通后重新部署即可
 - 多次提交会排队依次部署，不会并发
 
 可选配置（`wrangler.jsonc` 的 `vars`）：
@@ -105,9 +109,11 @@ pnpm worker:dev
 - 密码库的「密码」「备注」「两步验证密钥」以及文本快传、便签的内容用 AES-256-GCM 加密，每个用户的密钥由 `VAULT_KEY` 经 HKDF 派生；网站名称、网址、账号为明文（用于列表与搜索）
 - 这是服务端加密：能同时拿到 D1 数据和 `VAULT_KEY` 的人（即 Cloudflare 账号持有者）理论上可以解密；管理员角色在应用内无法查看他人的密码库
 - 登录拦截在前端路由层完成，接口权限由 Worker 校验；其余工具是纯前端代码，静态资源本身不做访问控制
+- 文本 / 文件快传凭 6 位取件码、便签凭 12 位分享码免登录访问；猜错按 IP（IPv6 按 /64）限流。文件下载使用 10 分钟有效的签名链接，且一律作为附件下载
+- 密码体检的泄露检查调用 Have I Been Pwned，只发送密码 SHA-1 的前 5 位（k-匿名），由 Worker 在服务端比对
 - 短链跳转（`/s/<短码>`）是公开的，任何人拿到短链都能访问；只有登录用户能创建。管理员可在短链工具中切换到「全部用户」查看、停用或删除任意短链，用于处理滥用
 
-微信小程序 / App 不同域，需要在 `env/.env.production` 中配置 Worker 的完整地址（如 `VITE_SERVER_BASEURL__WEIXIN_RELEASE`），并在小程序后台把该域名加入 request 合法域名。
+微信小程序 / App 不同域，需要在 `env/.env.production` 中配置 Worker 的完整地址（如 `VITE_SERVER_BASEURL__WEIXIN_RELEASE`），并在小程序后台把该域名加入 request、uploadFile、downloadFile 合法域名（后两项用于文件快传）。
 
 ## 新增一个工具
 

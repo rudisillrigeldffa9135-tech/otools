@@ -1,8 +1,9 @@
 <script lang="ts" setup>
-import type { INoteListItem } from '@/api/notes'
+import type { INoteListItem, ShareTtl } from '@/api/notes'
 import dayjs from 'dayjs'
-import { createNote, deleteNote, getNote, listNotes, updateNote } from '@/api/notes'
+import { createNote, deleteNote, getNote, listNotes, shareNote, unshareNote, updateNote } from '@/api/notes'
 import { copyText, toast } from '@/utils/common'
+import { getPageUrl } from '@/utils/site'
 import MdView from './components/md-view.vue'
 import { countText } from './markdown'
 import { derivePreview, deriveTitle } from './note-text'
@@ -72,6 +73,8 @@ interface Current {
   version?: number
   pinned: boolean
   updatedAt?: number
+  shareCode?: string | null
+  shareExpiresAt?: number
 }
 
 const current = ref<Current>()
@@ -238,7 +241,7 @@ async function openNote(id: number) {
   try {
     const note = await getNote(id)
     resetState()
-    current.value = { id: note.id, content: note.content, version: note.version, pinned: note.pinned, updatedAt: note.updatedAt }
+    current.value = { id: note.id, content: note.content, version: note.version, pinned: note.pinned, updatedAt: note.updatedAt, shareCode: note.shareCode, shareExpiresAt: note.shareExpiresAt }
     if (!wide.value)
       mode.value = note.content ? 'preview' : 'edit'
   }
@@ -277,12 +280,86 @@ async function reloadLatest() {
   const note = await getNote(c.id)
   resetState()
   clearDraft()
-  current.value = { id: note.id, content: note.content, version: note.version, pinned: note.pinned, updatedAt: note.updatedAt }
+  current.value = { id: note.id, content: note.content, version: note.version, pinned: note.pinned, updatedAt: note.updatedAt, shareCode: note.shareCode, shareExpiresAt: note.shareExpiresAt }
   toast('已加载最新版本，你的修改已复制')
 }
 
 function overwrite() {
   save(true)
+}
+
+/* ---------------- 分享 ---------------- */
+
+const shareOpen = ref(false)
+const shareTtl = ref<ShareTtl>(0)
+const sharing = ref(false)
+const SHARE_TTLS: { value: ShareTtl, label: string }[] = [
+  { value: 0, label: '永久' },
+  { value: 86400, label: '1 天' },
+  { value: 604800, label: '7 天' },
+  { value: 2592000, label: '30 天' },
+]
+
+function shareLink(code?: string | null) {
+  return code ? getPageUrl(`/pages-tools/notes/share?c=${code}`) : ''
+}
+
+async function openShare() {
+  // 分享的是服务器上的版本，先把未保存的修改存掉
+  await flush()
+  if (!current.value?.id)
+    return toast('先输入内容，保存后才能分享')
+  shareOpen.value = true
+}
+
+function applyShare(meta: { id: number, shareCode: string | null, shareExpiresAt: number }) {
+  if (current.value?.id === meta.id) {
+    current.value.shareCode = meta.shareCode
+    current.value.shareExpiresAt = meta.shareExpiresAt
+  }
+  const item = list.value.find(n => n.id === meta.id)
+  if (item) {
+    item.shareCode = meta.shareCode
+    item.shareExpiresAt = meta.shareExpiresAt
+  }
+}
+
+/** 开启分享或修改有效期；renew 为 true 时换一个新链接 */
+async function doShare(renew = false) {
+  const c = current.value
+  if (!c?.id)
+    return
+  sharing.value = true
+  try {
+    const meta = await shareNote(c.id, shareTtl.value, renew)
+    applyShare(meta)
+    copyText(shareLink(meta.shareCode))
+  }
+  catch {}
+  finally {
+    sharing.value = false
+  }
+}
+
+async function stopShare() {
+  const c = current.value
+  if (!c?.id)
+    return
+  sharing.value = true
+  try {
+    applyShare(await unshareNote(c.id))
+    toast('已取消分享，原链接失效', 'success')
+  }
+  catch {}
+  finally {
+    sharing.value = false
+  }
+}
+
+function shareQrcode() {
+  const link = shareLink(current.value?.shareCode)
+  if (link)
+    uni.navigateTo({ url: `/pages-tools/qrcode/index?text=${encodeURIComponent(link)}&note=${encodeURIComponent(title.value)}` })
 }
 
 /* ---------------- 置顶、删除、导出 ---------------- */
@@ -550,6 +627,7 @@ const showList = computed(() => wide.value || !current.value)
           >
             <view class="flex items-center gap-1.5">
               <view v-if="n.pinned" class="i-carbon-pin-filled shrink-0 text-12px text-amber-500" />
+              <view v-if="n.shareCode" class="i-carbon-share shrink-0 text-12px text-[var(--wot-color-theme)]" />
               <text class="min-w-0 flex-1 truncate text-14px text-main font-600">{{ n.title || '无标题' }}</text>
             </view>
             <text v-if="n.preview" class="ot-ellipsis-2 mt-1 text-12px text-sub leading-18px">{{ n.preview }}</text>
@@ -625,6 +703,9 @@ const showList = computed(() => wide.value || !current.value)
             <view class="i-carbon-document" />复制 Markdown
             <!-- #endif -->
           </view>
+          <view class="ot-notes__action" :class="{ 'is-shared': current.shareCode }" @click="openShare">
+            <view class="i-carbon-share" />{{ current.shareCode ? '已分享' : '分享' }}
+          </view>
           <view v-if="current.id" class="ot-notes__action" @click="togglePin(current)">
             <view :class="current.pinned ? 'i-carbon-pin-filled' : 'i-carbon-pin'" />{{ current.pinned ? '取消置顶' : '置顶' }}
           </view>
@@ -643,6 +724,51 @@ const showList = computed(() => wide.value || !current.value)
     <view class="px-1 text-12px text-muted leading-20px">
       停止输入后自动保存，所有登录设备同步；内容在服务端加密存储。代码块写上语言（如 ```js）即可高亮，支持 JS / TS / Python / Go / Java / SQL / Shell 等 20 多种语言。<!-- #ifdef H5 -->Ctrl+S 立即保存，Tab 缩进。<!-- #endif -->
     </view>
+
+    <wd-popup v-model="shareOpen" position="center" custom-style="border-radius: 16px; width: min(92vw, 420px);">
+      <view v-if="current" class="ot-notes__share">
+        <view class="flex items-center gap-2">
+          <view class="i-carbon-share text-18px text-[var(--wot-color-theme)]" />
+          <text class="flex-1 text-16px text-main font-600">分享便签</text>
+          <view class="i-carbon-close cursor-pointer text-18px text-muted" @click="shareOpen = false" />
+        </view>
+        <text class="mt-2 block text-12px text-muted leading-18px">
+          拿到链接的人无需登录即可只读查看，看到的始终是你的最新内容；取消分享后链接立即失效。
+        </text>
+        <view class="mt-4 flex items-center gap-3 text-13px text-sub">
+          <text class="shrink-0">有效期</text>
+          <ot-segmented v-model="shareTtl" :options="SHARE_TTLS" size="small" />
+        </view>
+        <template v-if="current.shareCode">
+          <view class="ot-notes__share-link ot-mono" @click="copyText(shareLink(current.shareCode))">
+            {{ shareLink(current.shareCode) || '（无法生成链接）' }}
+          </view>
+          <text class="mt-1.5 block text-12px text-muted">
+            {{ current.shareExpiresAt ? `${dayjs(current.shareExpiresAt * 1000).format('YYYY-MM-DD HH:mm')} 失效` : '永久有效' }}
+          </text>
+          <view class="mt-4 flex flex-wrap gap-2">
+            <wd-button size="small" icon="copy" @click="copyText(shareLink(current.shareCode))">
+              复制链接
+            </wd-button>
+            <wd-button size="small" type="info" plain :loading="sharing" @click="doShare(false)">
+              更新有效期
+            </wd-button>
+            <wd-button size="small" type="info" plain @click="shareQrcode">
+              二维码
+            </wd-button>
+            <wd-button size="small" type="info" plain :loading="sharing" @click="doShare(true)">
+              换新链接
+            </wd-button>
+            <wd-button size="small" type="error" plain :loading="sharing" @click="stopShare">
+              取消分享
+            </wd-button>
+          </view>
+        </template>
+        <wd-button v-else block custom-class="mt-4" :loading="sharing" @click="doShare(false)">
+          生成分享链接
+        </wd-button>
+      </view>
+    </wd-popup>
   </ot-tool-layout>
 </template>
 
@@ -872,6 +998,21 @@ const showList = computed(() => wide.value || !current.value)
   color: var(--ot-text-3);
 }
 
+.ot-notes__share {
+  padding: 18px;
+}
+
+.ot-notes__share-link {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--ot-text);
+  background: var(--ot-fill);
+  cursor: pointer;
+}
+
 .ot-notes__action {
   display: flex;
   align-items: center;
@@ -885,6 +1026,10 @@ const showList = computed(() => wide.value || !current.value)
 
   &.is-danger:hover {
     color: #ef4444;
+  }
+
+  &.is-shared {
+    color: var(--wot-color-theme);
   }
 }
 
