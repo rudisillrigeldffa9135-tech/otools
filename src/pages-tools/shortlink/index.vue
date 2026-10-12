@@ -6,6 +6,7 @@ import { createLink, deleteLink, listLinks, updateLink } from '@/api/shortlink'
 import { useUserStore } from '@/store/user'
 import { copyText, toast } from '@/utils/common'
 import { getSiteOrigin } from '@/utils/site'
+import QrPopup from '../qrcode/components/qr-popup.vue'
 import { EXPIRE_OPTIONS, expiresAtOf, linkStatus, matchLink, validateCode, validateTarget } from './utils'
 
 definePage({
@@ -125,10 +126,23 @@ function openLink(url: string) {
   // #endif
 }
 
-/** 跳到二维码工具，并把短链与备注带过去 */
+/* ---------------- 分享二维码（在当前页弹窗展示） ---------------- */
+
+const qrOpen = ref(false)
+const qrText = ref('')
+const qrNote = ref('')
+
+function showQrcode(text: string, note: string) {
+  if (!text)
+    return toast('无法生成链接')
+  qrText.value = text
+  qrNote.value = note
+  qrOpen.value = true
+}
+
+/** 短链二维码，备注用短链标题 */
 function toQrcode(link: IShortLink) {
-  const query = `text=${encodeURIComponent(link.shortUrl)}&note=${encodeURIComponent(link.title)}`
-  uni.navigateTo({ url: `/pages-tools/qrcode/index?${query}` })
+  showQrcode(link.shortUrl, link.title)
 }
 
 function replaceLink(link: IShortLink) {
@@ -403,6 +417,7 @@ async function saveEdit() {
         </view>
       </view>
     </wd-popup>
+    <qr-popup v-model="qrOpen" :text="qrText" :note="qrNote" />
   </ot-tool-layout>
 </template>
 

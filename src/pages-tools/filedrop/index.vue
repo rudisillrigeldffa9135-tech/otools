@@ -4,6 +4,7 @@ import { absoluteApiUrl, authHeader, deleteFile, FILE_TTLS, getFileInfo, listFil
 import { isLoggedIn, LOGIN_PAGE } from '@/router/auth'
 import { copyText, toast } from '@/utils/common'
 import { getPageUrl } from '@/utils/site'
+import QrPopup from '../qrcode/components/qr-popup.vue'
 
 definePage({
   style: { navigationBarTitleText: '文件快传' },
@@ -73,11 +74,22 @@ function iconOf(name: string, mime: string) {
   return 'i-carbon-document-blank'
 }
 
-function toQrcode(code: string) {
-  const link = linkOf(code)
-  if (!link)
+/* ---------------- 分享二维码（在当前页弹窗展示） ---------------- */
+
+const qrOpen = ref(false)
+const qrText = ref('')
+const qrNote = ref('')
+
+function showQrcode(text: string, note: string) {
+  if (!text)
     return toast('无法生成链接')
-  uni.navigateTo({ url: `/pages-tools/qrcode/index?text=${encodeURIComponent(link)}&note=${encodeURIComponent(`文件快传 取件码 ${prettyCode(code)}`)}` })
+  qrText.value = text
+  qrNote.value = note
+  qrOpen.value = true
+}
+
+function toQrcode(code: string) {
+  showQrcode(linkOf(code), `文件快传 取件码 ${prettyCode(code)}`)
 }
 
 /* ---------------- 取件 ---------------- */
@@ -657,6 +669,7 @@ onUnload(cleanup)
       </view>
     </view>
     <!-- #endif -->
+    <qr-popup v-model="qrOpen" :text="qrText" :note="qrNote" />
   </ot-tool-layout>
 </template>
 

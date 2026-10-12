@@ -5,6 +5,7 @@ import { createPaste, deletePaste, getPaste, listPastes } from '@/api/paste'
 import { isLoggedIn, LOGIN_PAGE } from '@/router/auth'
 import { copyText, toast } from '@/utils/common'
 import { getPageUrl } from '@/utils/site'
+import QrPopup from '../qrcode/components/qr-popup.vue'
 
 definePage({
   style: { navigationBarTitleText: '文本快传' },
@@ -87,13 +88,23 @@ async function send() {
   }
 }
 
-/** 跳到二维码工具：扫码即可在另一台设备上打开并提取 */
-function toQrcode(code: string) {
-  const link = linkOf(code)
-  if (!link)
+/* ---------------- 分享二维码（在当前页弹窗展示） ---------------- */
+
+const qrOpen = ref(false)
+const qrText = ref('')
+const qrNote = ref('')
+
+function showQrcode(text: string, note: string) {
+  if (!text)
     return toast('无法生成链接')
-  const query = `text=${encodeURIComponent(link)}&note=${encodeURIComponent(`文本快传 取件码 ${prettyCode(code)}`)}`
-  uni.navigateTo({ url: `/pages-tools/qrcode/index?${query}` })
+  qrText.value = text
+  qrNote.value = note
+  qrOpen.value = true
+}
+
+/** 扫码即可在另一台设备上打开并提取 */
+function toQrcode(code: string) {
+  showQrcode(linkOf(code), `文本快传 取件码 ${prettyCode(code)}`)
 }
 
 /* ---------------- 取件 ---------------- */
@@ -335,6 +346,7 @@ onUnload(() => clearInterval(ticker))
     <view class="px-1 text-12px text-muted leading-20px">
       内容在服务端加密保存，到期自动删除。拿到取件码或链接的人无需登录即可提取，请只发给信任的人，敏感内容建议开启阅后即焚；你登录的所有设备都能在「我的快传」中看到自己发送的内容。
     </view>
+    <qr-popup v-model="qrOpen" :text="qrText" :note="qrNote" />
   </ot-tool-layout>
 </template>
 

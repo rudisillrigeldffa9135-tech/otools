@@ -4,6 +4,7 @@ import dayjs from 'dayjs'
 import { createNote, deleteNote, getNote, listNotes, shareNote, unshareNote, updateNote } from '@/api/notes'
 import { copyText, toast } from '@/utils/common'
 import { getPageUrl } from '@/utils/site'
+import QrView from '../qrcode/components/qr-view.vue'
 import MdView from './components/md-view.vue'
 import { countText } from './markdown'
 import { derivePreview, deriveTitle } from './note-text'
@@ -356,11 +357,13 @@ async function stopShare() {
   }
 }
 
-function shareQrcode() {
-  const link = shareLink(current.value?.shareCode)
-  if (link)
-    uni.navigateTo({ url: `/pages-tools/qrcode/index?text=${encodeURIComponent(link)}&note=${encodeURIComponent(title.value)}` })
-}
+/** 在分享弹窗里展开 / 收起二维码 */
+const shareQrOpen = ref(false)
+const shareQrView = ref<InstanceType<typeof QrView>>()
+watch(shareOpen, (v) => {
+  if (!v)
+    shareQrOpen.value = false
+})
 
 /* ---------------- 置顶、删除、导出 ---------------- */
 
@@ -753,8 +756,8 @@ const showList = computed(() => wide.value || !current.value)
             <wd-button size="small" type="info" plain :loading="sharing" @click="doShare(false)">
               更新有效期
             </wd-button>
-            <wd-button size="small" type="info" plain @click="shareQrcode">
-              二维码
+            <wd-button size="small" type="info" plain @click="shareQrOpen = !shareQrOpen">
+              {{ shareQrOpen ? '收起二维码' : '二维码' }}
             </wd-button>
             <wd-button size="small" type="info" plain :loading="sharing" @click="doShare(true)">
               换新链接
@@ -764,7 +767,11 @@ const showList = computed(() => wide.value || !current.value)
             </wd-button>
           </view>
         </template>
-        <wd-button v-else block custom-class="mt-4" :loading="sharing" @click="doShare(false)">
+        <view v-if="current.shareCode && shareQrOpen" class="mt-4 flex flex-col items-center gap-2">
+          <qr-view ref="shareQrView" :text="shareLink(current.shareCode)" :note="title" :size="180" />
+          <text class="cursor-pointer text-13px text-[var(--wot-color-theme)]" @click="shareQrView?.save()">保存图片</text>
+        </view>
+        <wd-button v-else-if="!current.shareCode" block custom-class="mt-4" :loading="sharing" @click="doShare(false)">
           生成分享链接
         </wd-button>
       </view>
