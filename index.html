@@ -2,7 +2,16 @@
 <html build-time="%BUILD_TIME%">
   <head>
     <meta charset="UTF-8" />
-    <link rel="shortcut icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="icon" href="%PUBLIC_BASE%static/pwa/favicon-48.png" type="image/png" />
+    <!-- PWA：可安装到桌面 / 主屏幕，见 vite-plugins/pwa.ts -->
+    <link rel="manifest" href="%PUBLIC_BASE%manifest.webmanifest" />
+    <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111317" media="(prefers-color-scheme: dark)" />
+    <link rel="apple-touch-icon" href="%PUBLIC_BASE%static/pwa/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="%VITE_APP_TITLE%" />
     <script>
       var coverSupport =
         'CSS' in window &&

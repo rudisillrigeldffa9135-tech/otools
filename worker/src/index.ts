@@ -2,6 +2,7 @@
  * OTools Cloudflare Worker 入口
  * - /api/*：认证、用户管理、密码库、短链、文本 / 文件快传、便签、我的 IP、DNS、汇率、域名注册信息等接口（D1 + R2 存储）
  * - /s/:code：短链跳转
+ * - /r/:code：文本快传的纯文本页面（类似 GitHub Raw）
  * - 其余请求：交给静态资源（H5 构建产物 dist/build/h5），见 wrangler.jsonc 的 assets 配置
  * - 定时任务（wrangler.jsonc 的 triggers.crons）：清理过期的文件、快传、限流记录与会话
  */
@@ -123,7 +124,7 @@ async function cleanup(env: Env) {
   const t = now()
   const removedFiles = await files.cleanupExpiredFiles(env)
   await env.DB.batch([
-    env.DB.prepare('DELETE FROM pastes WHERE expires_at <= ?').bind(t),
+    env.DB.prepare('DELETE FROM pastes WHERE expires_at > 0 AND expires_at <= ?').bind(t),
     env.DB.prepare('DELETE FROM rate_limits WHERE reset_at <= ?').bind(t),
     // 缓存过期后仍保留一天，供上游故障时兜底
     env.DB.prepare('DELETE FROM cache WHERE expires_at <= ?').bind(t - 86400),
@@ -147,6 +148,17 @@ export default {
     if (short && (req.method === 'GET' || req.method === 'HEAD')) {
       try {
         return await shortlink.redirect(req, env, ctx, decodeURIComponent(short[1]))
+      }
+      catch (e) {
+        console.error(e)
+        return new Response('服务暂时不可用', { status: 500 })
+      }
+    }
+    // 文本快传纯文本页面：/r/<取件码或链接码>
+    const raw = pathname.match(/^\/r\/([^/]+)\/?$/)
+    if (raw && (req.method === 'GET' || req.method === 'HEAD')) {
+      try {
+        return await paste.rawPaste(req, env, decodeURIComponent(raw[1]))
       }
       catch (e) {
         console.error(e)

@@ -35,6 +35,7 @@ import openDevTools from './scripts/open-dev-tools'
 import vitePluginEruda from './scripts/vite-plugin-eruda'
 import { createCopyNativeResourcesPlugin } from './vite-plugins/copy-native-resources'
 import syncManifestPlugin from './vite-plugins/sync-manifest-plugins'
+import pwaPlugin from './vite-plugins/pwa'
 import toolMetasPlugin from './vite-plugins/tool-metas'
 
 // https://vitejs.dev/config/
@@ -135,12 +136,25 @@ export default defineConfig(({ command, mode }) => {
       // h5环境增加 BUILD_TIME 和 BUILD_BRANCH
       UNI_PLATFORM === 'h5' && {
         name: 'html-transform',
-        transformIndexHtml(html) {
-          return html
-            .replace('%BUILD_TIME%', dayjs().format('YYYY-MM-DD HH:mm:ss'))
-            .replace('%VITE_APP_TITLE%', VITE_APP_TITLE)
+        // pre：要在 Vite 解析 href 之前替换占位符
+        transformIndexHtml: {
+          order: 'pre',
+          handler(html) {
+            return html
+              .replace('%BUILD_TIME%', dayjs().format('YYYY-MM-DD HH:mm:ss'))
+              .replaceAll('%VITE_APP_TITLE%', VITE_APP_TITLE)
+              .replaceAll('%PUBLIC_BASE%', VITE_APP_PUBLIC_BASE)
+          },
         },
       },
+      // h5 支持 PWA 安装：manifest.webmanifest + sw.js
+      UNI_PLATFORM === 'h5' && pwaPlugin({
+        base: VITE_APP_PUBLIC_BASE,
+        name: VITE_APP_TITLE,
+        description: '常用在线工具集：密码库、便签、文本 / 文件快传、短链等',
+        themeColor: '#f5f6f8',
+        backgroundColor: '#f5f6f8',
+      }),
       // 打包分析插件，h5 + 生产环境才弹出
       UNI_PLATFORM === 'h5'
       && mode === 'production'

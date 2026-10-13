@@ -4,7 +4,7 @@ import dayjs from 'dayjs'
 import { createPaste, deletePaste, getPaste, listPastes } from '@/api/paste'
 import { isLoggedIn, LOGIN_PAGE } from '@/router/auth'
 import { copyText, toast } from '@/utils/common'
-import { getPageUrl } from '@/utils/site'
+import { getPageUrl, getSiteOrigin } from '@/utils/site'
 import QrPopup from '../qrcode/components/qr-popup.vue'
 
 definePage({
@@ -13,6 +13,9 @@ definePage({
 
 const MAX_LENGTH = 50_000
 const PAGE_PATH = '/pages-tools/paste/index'
+/** 6 位取件码；不需要取件码的快传用 16 位链接码 */
+const CODE_LENGTH = 6
+const LINK_CODE_LENGTH = 16
 
 /** 未登录时只能取件；发送与「我的快传」需要登录 */
 const loggedIn = ref(isLoggedIn())
@@ -23,6 +26,7 @@ const TTL_OPTIONS = [
   { value: 86400, label: '1 天' },
   { value: 7 * 86400, label: '7 天' },
   { value: 30 * 86400, label: '30 天' },
+  { value: 0, label: '永久' },
 ]
 
 const nowSec = ref(Math.floor(Date.now() / 1000))
@@ -33,11 +37,18 @@ function prettyCode(code: string) {
   return `${code.slice(0, 3)} ${code.slice(3)}`
 }
 
-function linkOf(code: string) {
-  return getPageUrl(`${PAGE_PATH}?code=${code}`)
+/** 分享链接：勾选了纯文本的打开 /r/<码>（整页只有原文），否则打开本页并自动提取 */
+function linkOf(item: Pick<IPasteSummary, 'code' | 'raw'>) {
+  if (item.raw) {
+    const origin = getSiteOrigin()
+    return origin ? `${origin}/r/${item.code}` : ''
+  }
+  return getPageUrl(`${PAGE_PATH}?code=${item.code}`)
 }
 
-function remainText(expiresAt: number) {
+function remainText(expiresAt: number | null) {
+  if (!expiresAt)
+    return '永久有效'
   const s = expiresAt - nowSec.value
   if (s <= 0)
     return '已过期'
@@ -55,6 +66,10 @@ function remainText(expiresAt: number) {
 const content = ref('')
 const ttl = ref(3600)
 const burn = ref(false)
+/** 生成 6 位取件码；关闭后只能通过链接打开（链接码 16 位，无法被猜到） */
+const withCode = ref(true)
+/** 分享链接直接打开纯文本页面，类似 GitHub 的 Raw */
+const raw = ref(false)
 const sending = ref(false)
 const sent = ref<IPasteSummary>()
 
@@ -75,9 +90,15 @@ async function send() {
     return toast('请输入要发送的内容')
   sending.value = true
   try {
-    sent.value = await createPaste({ content: content.value, expiresIn: ttl.value, burnAfterRead: burn.value })
+    sent.value = await createPaste({
+      content: content.value,
+      expiresIn: ttl.value,
+      burnAfterRead: burn.value,
+      withCode: withCode.value,
+      raw: raw.value,
+    })
     content.value = ''
-    copyText(sent.value.code)
+    copyText(sent.value.withCode ? sent.value.code : linkOf(sent.value))
     await loadList()
   }
   catch {
@@ -103,8 +124,8 @@ function showQrcode(text: string, note: string) {
 }
 
 /** 扫码即可在另一台设备上打开并提取 */
-function toQrcode(code: string) {
-  showQrcode(linkOf(code), `文本快传 取件码 ${prettyCode(code)}`)
+function toQrcode(item: IPasteSummary) {
+  showQrcode(linkOf(item), item.withCode ? `文本快传 取件码 ${prettyCode(item.code)}` : '文本快传 扫码打开')
 }
 
 /* ---------------- 取件 ---------------- */
@@ -115,17 +136,18 @@ const fetched = ref<IPasteDetail>()
 const fetchError = ref('')
 
 /** 只保留取件码允许的字符并转大写 */
-const normalizedCode = computed(() => codeInput.value.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6))
+const normalizedCode = computed(() => codeInput.value.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, LINK_CODE_LENGTH))
+const codeReady = computed(() => normalizedCode.value.length === CODE_LENGTH || normalizedCode.value.length === LINK_CODE_LENGTH)
 
 /** 登录后回到本页，已输入的取件码一并带上 */
 function toLogin() {
   const code = normalizedCode.value
-  const back = code.length === 6 ? `${PAGE_PATH}?code=${code}` : PAGE_PATH
+  const back = codeReady.value ? `${PAGE_PATH}?code=${code}` : PAGE_PATH
   uni.navigateTo({ url: `${LOGIN_PAGE}?redirect=${encodeURIComponent(back)}` })
 }
 
 async function fetchByCode(code = normalizedCode.value) {
-  if (code.length !== 6)
+  if (code.length !== CODE_LENGTH && code.length !== LINK_CODE_LENGTH)
     return toast('请输入 6 位取件码')
   fetching.value = true
   fetchError.value = ''
@@ -180,7 +202,7 @@ async function copyContent(item: IPasteListItem) {
 function remove(item: IPasteListItem) {
   uni.showModal({
     title: '删除快传',
-    content: `确定删除取件码 ${prettyCode(item.code)} 吗？删除后无法再提取。`,
+    content: item.withCode ? `确定删除取件码 ${prettyCode(item.code)} 吗？删除后无法再提取。` : '确定删除这条快传吗？删除后链接失效。',
     confirmColor: '#ef4444',
     success: async ({ confirm }) => {
       if (!confirm)
@@ -197,7 +219,7 @@ function remove(item: IPasteListItem) {
 onLoad((query) => {
   // 从分享链接打开：自动提取
   const code = String(query?.code || '').replace(/[^a-z0-9]/gi, '').toUpperCase()
-  if (code.length === 6) {
+  if (code.length === CODE_LENGTH || code.length === LINK_CODE_LENGTH) {
     codeInput.value = code
     fetchByCode(code)
   }
@@ -221,10 +243,10 @@ onUnload(() => clearInterval(ticker))
           <view class="i-carbon-password shrink-0 text-16px text-muted" />
           <input
             v-model="codeInput" class="ot-mono min-w-0 flex-1 text-16px tracking-widest uppercase"
-            placeholder="输入 6 位取件码" :maxlength="8" confirm-type="done" @confirm="fetchByCode()"
+            placeholder="输入 6 位取件码" :maxlength="20" confirm-type="done" @confirm="fetchByCode()"
           >
         </view>
-        <wd-button :loading="fetching" :disabled="normalizedCode.length !== 6" @click="fetchByCode()">
+        <wd-button :loading="fetching" :disabled="!codeReady" @click="fetchByCode()">
           提取
         </wd-button>
       </view>
@@ -276,9 +298,27 @@ onUnload(() => clearInterval(ticker))
             <ot-segmented v-model="ttl" :options="TTL_OPTIONS" size="small" />
           </view>
           <view class="flex items-center gap-3">
+            <text class="w-60px shrink-0">取件码</text>
+            <wd-switch v-model="withCode" size="20px" />
+            <text class="text-12px text-muted">{{ withCode ? '生成 6 位取件码，输入即可提取' : '不生成取件码，只能通过链接或二维码打开' }}</text>
+          </view>
+          <view class="flex items-center gap-3">
+            <text class="w-60px shrink-0">纯文本</text>
+            <wd-switch v-model="raw" size="20px" />
+            <text class="text-12px text-muted">链接打开后整个页面只有原文（类似 GitHub 的 Raw），可直接用 curl 下载</text>
+          </view>
+          <view class="flex items-center gap-3">
             <text class="w-60px shrink-0">阅后即焚</text>
             <wd-switch v-model="burn" size="20px" />
-            <text class="text-12px text-muted">他人提取一次后立即删除（你自己查看不受影响）</text>
+            <text class="text-12px text-muted">他人提取一次后立即删除（你自己在本工具中查看不受影响）</text>
+          </view>
+          <view v-if="burn && raw" class="ot-paste__msg is-warn mt-0!">
+            <view class="i-carbon-warning shrink-0" />
+            <text>纯文本链接不区分是谁打开的，你自己打开、或聊天软件生成链接预览，都会触发销毁</text>
+          </view>
+          <view v-if="ttl === 0" class="ot-paste__msg is-warn mt-0!">
+            <view class="i-carbon-time shrink-0" />
+            <text>永久有效的快传不会自动删除，不再需要时请在「我的快传」中手动删除</text>
           </view>
         </view>
         <wd-button block custom-class="mt-4" :loading="sending" :disabled="content.length > MAX_LENGTH" @click="send">
@@ -286,19 +326,25 @@ onUnload(() => clearInterval(ticker))
         </wd-button>
 
         <view v-if="sent" class="ot-paste__result">
-          <text class="text-13px text-sub">取件码（已复制）</text>
-          <text class="ot-paste__big-code ot-mono" user-select selectable>{{ prettyCode(sent.code) }}</text>
+          <template v-if="sent.withCode">
+            <text class="text-13px text-sub">取件码（已复制）</text>
+            <text class="ot-paste__big-code ot-mono" user-select selectable>{{ prettyCode(sent.code) }}</text>
+          </template>
+          <template v-else>
+            <text class="text-13px text-sub">分享链接（已复制）</text>
+            <text class="ot-paste__link ot-mono" user-select selectable>{{ linkOf(sent) || '无法生成链接' }}</text>
+          </template>
           <text class="text-12px text-muted">
-            {{ remainText(sent.expiresAt) }}{{ sent.burnAfterRead ? ' · 阅后即焚' : '' }} · 在另一台设备打开「文本快传」输入取件码，或扫码打开
+            {{ remainText(sent.expiresAt) }}{{ sent.burnAfterRead ? ' · 阅后即焚' : '' }}{{ sent.raw ? ' · 纯文本' : '' }} · {{ sent.withCode ? '在另一台设备打开「文本快传」输入取件码，或扫码打开' : '把链接发给对方，或扫码打开' }}
           </text>
           <view class="mt-3 flex flex-wrap justify-center gap-2">
-            <wd-button size="small" icon="copy" @click="copyText(sent.code)">
+            <wd-button v-if="sent.withCode" size="small" icon="copy" @click="copyText(sent.code)">
               复制取件码
             </wd-button>
-            <wd-button size="small" type="info" plain :disabled="!linkOf(sent.code)" @click="copyText(linkOf(sent.code))">
+            <wd-button size="small" type="info" plain :disabled="!linkOf(sent)" @click="copyText(linkOf(sent))">
               复制链接
             </wd-button>
-            <wd-button size="small" type="info" plain @click="toQrcode(sent.code)">
+            <wd-button size="small" type="info" plain @click="toQrcode(sent)">
               二维码
             </wd-button>
           </view>
@@ -316,23 +362,28 @@ onUnload(() => clearInterval(ticker))
         <view v-for="item in list" :key="item.code" class="ot-paste__item">
           <view class="flex items-start gap-2">
             <text class="min-w-0 flex-1 break-all text-14px text-main leading-relaxed">{{ item.preview }}</text>
-            <text class="ot-paste__code-tag ot-mono" @click="copyText(item.code)">{{ prettyCode(item.code) }}</text>
+            <text v-if="item.withCode" class="ot-paste__code-tag ot-mono" @click="copyText(item.code)">{{ prettyCode(item.code) }}</text>
+            <text v-else class="ot-paste__code-tag is-link">仅链接</text>
           </view>
           <view class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-12px text-muted">
             <text>{{ dayjs(item.createdAt * 1000).format('MM-DD HH:mm') }}</text>
             <text>{{ item.size }} 字</text>
             <text>{{ remainText(item.expiresAt) }}</text>
             <text v-if="item.views">被提取 {{ item.views }} 次</text>
+            <text v-if="item.raw" class="ot-paste__tag">纯文本</text>
             <text v-if="item.burnAfterRead" class="ot-paste__burn">阅后即焚</text>
           </view>
           <view class="ot-paste__actions">
             <view class="ot-paste__action" @click="copyContent(item)">
               <view class="i-carbon-copy" />复制内容
             </view>
-            <view class="ot-paste__action" @click="copyText(item.code)">
+            <view v-if="item.withCode" class="ot-paste__action" @click="copyText(item.code)">
               <view class="i-carbon-password" />复制取件码
             </view>
-            <view class="ot-paste__action" @click="toQrcode(item.code)">
+            <view v-if="linkOf(item)" class="ot-paste__action" @click="copyText(linkOf(item))">
+              <view class="i-carbon-link" />复制链接
+            </view>
+            <view class="ot-paste__action" @click="toQrcode(item)">
               <view class="i-carbon-qr-code" />二维码
             </view>
             <view class="ot-paste__action is-danger" @click="remove(item)">
@@ -344,7 +395,7 @@ onUnload(() => clearInterval(ticker))
     </template>
 
     <view class="px-1 text-12px text-muted leading-20px">
-      内容在服务端加密保存，到期自动删除。拿到取件码或链接的人无需登录即可提取，请只发给信任的人，敏感内容建议开启阅后即焚；你登录的所有设备都能在「我的快传」中看到自己发送的内容。
+      内容在服务端加密保存，到期自动删除（永久有效的除外）。拿到取件码或链接的人无需登录即可提取，请只发给信任的人，敏感内容建议开启阅后即焚，或关闭取件码只用链接分享；你登录的所有设备都能在「我的快传」中看到自己发送的内容。
     </view>
     <qr-popup v-model="qrOpen" :text="qrText" :note="qrNote" />
   </ot-tool-layout>
@@ -426,6 +477,14 @@ onUnload(() => clearInterval(ticker))
   color: var(--wot-color-theme);
 }
 
+.ot-paste__link {
+  margin: 6px 0;
+  max-width: 100%;
+  font-size: 13px;
+  word-break: break-all;
+  color: var(--wot-color-theme);
+}
+
 .ot-paste__item {
   padding: 12px 0;
 
@@ -443,6 +502,20 @@ onUnload(() => clearInterval(ticker))
   color: var(--wot-color-theme);
   background: rgba(79, 110, 247, 0.1);
   cursor: pointer;
+}
+
+.ot-paste__code-tag.is-link {
+  letter-spacing: 0;
+  color: var(--ot-text-2);
+  background: var(--ot-fill);
+  cursor: default;
+}
+
+.ot-paste__tag {
+  padding: 0 6px;
+  border-radius: 6px;
+  color: var(--wot-color-theme);
+  background: rgba(79, 110, 247, 0.1);
 }
 
 .ot-paste__burn {

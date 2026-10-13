@@ -8,6 +8,7 @@ import { useToolStore } from '@/store/tool'
 import { useUserStore } from '@/store/user'
 import { tools } from '@/tools/registry'
 import { toast } from '@/utils/common'
+import { promptInstall, pwaState } from '@/utils/pwa'
 
 definePage({
   style: {
@@ -92,6 +93,22 @@ function clearRecent() {
   toast('已清空', 'success')
 }
 
+/* ---------------- 安装到桌面（H5 / PWA） ---------------- */
+
+async function installApp() {
+  if (pwaState.canPrompt.value) {
+    if (await promptInstall())
+      toast('已安装，可从桌面或主屏幕打开', 'success')
+    return
+  }
+  uni.showModal({
+    title: '添加到主屏幕',
+    content: '在 Safari 中点击底部的「分享」按钮，选择「添加到主屏幕」即可像应用一样打开 OTools。',
+    showCancel: false,
+    confirmText: '知道了',
+  })
+}
+
 const version = '1.0.0'
 </script>
 
@@ -129,6 +146,18 @@ const version = '1.0.0'
         </view>
       </view>
     </ot-panel>
+
+    <!-- #ifdef H5 -->
+    <ot-panel v-if="pwaState.canPrompt.value || pwaState.needManual.value" title="应用">
+      <view class="ot-row" @click="installApp">
+        <view class="flex items-center gap-2">
+          <view class="i-carbon-download text-muted" />
+          <text>安装到{{ pwaState.needManual.value ? '主屏幕' : '桌面' }}</text>
+        </view>
+        <text class="text-12px text-muted">像应用一样独立窗口打开</text>
+      </view>
+    </ot-panel>
+    <!-- #endif -->
 
     <ot-panel title="外观">
       <ot-segmented v-model="themeMode" :options="themeOptions" />
