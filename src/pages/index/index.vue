@@ -81,7 +81,7 @@ function onSearchConfirm() {
         <view class="ot-section-title">
           最近使用
         </view>
-        <scroll-view scroll-x class="mb-2 whitespace-nowrap" :show-scrollbar="false">
+        <ot-hscroll class="mb-2 whitespace-nowrap">
           <view
             v-for="tool in toolStore.recents" :key="tool.id"
             class="ot-chip" hover-class="opacity-70"
@@ -90,7 +90,7 @@ function onSearchConfirm() {
             <view :class="tool.icon" class="text-15px" />
             <text>{{ tool.name }}</text>
           </view>
-        </scroll-view>
+        </ot-hscroll>
       </template>
 
       <!-- 收藏 -->
@@ -107,7 +107,7 @@ function onSearchConfirm() {
       <view class="ot-section-title">
         全部工具
       </view>
-      <scroll-view scroll-x class="mb-3 whitespace-nowrap" :show-scrollbar="false">
+      <ot-hscroll class="mb-3 whitespace-nowrap">
         <view
           v-for="tab in categoryTabs" :key="tab.id"
           class="ot-tab" :class="{ 'is-active': activeCategory === tab.id }"
@@ -116,7 +116,7 @@ function onSearchConfirm() {
           {{ tab.name }}
           <text class="ml-1 text-12px opacity-60">{{ tab.count }}</text>
         </view>
-      </scroll-view>
+      </ot-hscroll>
       <view class="ot-grid">
         <ot-tool-card v-for="tool in filteredTools" :key="tool.id" :tool="tool" />
       </view>

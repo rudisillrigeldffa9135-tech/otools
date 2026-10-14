@@ -427,7 +427,7 @@ function percentClass(item: Item) {
         <view class="ot-ic__row">
           <text class="ot-ic__label">质量</text>
           <view class="min-w-0 flex-1">
-            <wd-slider v-model="quality" :min="10" :max="100" :step="5" :disabled="!qualityApplies" hide-min-max />
+            <ot-slider v-model="quality" :min="10" :max="100" :step="5" :disabled="!qualityApplies" />
           </view>
           <text class="ot-mono w-36px text-right">{{ quality }}</text>
         </view>
@@ -441,7 +441,7 @@ function percentClass(item: Item) {
         <view v-if="resizeMode === 'scale'" class="ot-ic__row">
           <text class="ot-ic__label">缩放到</text>
           <view class="min-w-0 flex-1">
-            <wd-slider v-model="scale" :min="5" :max="100" :step="5" hide-min-max />
+            <ot-slider v-model="scale" :min="5" :max="100" :step="5" />
           </view>
           <text class="ot-mono w-36px text-right">{{ scale }}%</text>
         </view>

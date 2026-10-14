@@ -63,7 +63,7 @@ watch([length, count, charset], generate, { immediate: true })
       <view class="text-13px text-sub">
         长度：{{ length }}
       </view>
-      <wd-slider v-model="length" :min="4" :max="64" hide-min-max hide-label />
+      <ot-slider v-model="length" :min="4" :max="64" />
       <view class="mt-2 flex flex-wrap gap-x-5 gap-y-3">
         <wd-checkbox v-model="options.upper" shape="square">
           大写 A-Z
