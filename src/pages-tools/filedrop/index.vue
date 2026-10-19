@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { IFileInfo, IFileSummary } from '@/api/files'
-import { absoluteApiUrl, authHeader, deleteFile, FILE_TTLS, getFileInfo, listFiles, MAX_FILE_SIZE, MAX_MP_FILE_SIZE, uploadUrl } from '@/api/files'
+import { absoluteApiUrl, authHeader, deleteFile, FILE_TTLS, getFileInfo, listFiles, MAX_CUSTOM_TTL, MAX_FILE_SIZE, MAX_MP_FILE_SIZE, MIN_CUSTOM_TTL, uploadUrl } from '@/api/files'
 import { isLoggedIn, LOGIN_PAGE } from '@/router/auth'
 import { copyText, toast } from '@/utils/common'
 import { getPageUrl } from '@/utils/site'
@@ -11,8 +11,14 @@ definePage({
 })
 
 const PAGE_PATH = '/pages-tools/filedrop/index'
-const TTL_LABEL: Record<number, string> = { 3600: '1 小时', 86400: '1 天', 259200: '3 天', 604800: '7 天' }
-const TTL_OPTIONS = FILE_TTLS.map(v => ({ value: v, label: TTL_LABEL[v] }))
+const TTL_LABEL: Record<number, string> = { 3600: '1 小时', 86400: '1 天', 259200: '3 天', 604800: '7 天', 2592000: '30 天' }
+/** -1 表示自定义 */
+const CUSTOM_TTL = -1
+const TTL_OPTIONS = [...FILE_TTLS.map(v => ({ value: v, label: TTL_LABEL[v] })), { value: CUSTOM_TTL, label: '自定义' }]
+const UNIT_OPTIONS = [
+  { value: 3600, label: '小时' },
+  { value: 86400, label: '天' },
+]
 let MAX_SIZE = MAX_FILE_SIZE
 // #ifndef H5
 MAX_SIZE = MAX_MP_FILE_SIZE
@@ -35,7 +41,9 @@ function formatBytes(n: number) {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
-function remainText(expiresAt: number) {
+function remainText(expiresAt: number | null) {
+  if (!expiresAt)
+    return '永久有效'
   const s = expiresAt - nowSec.value
   if (s <= 0)
     return '已过期'
@@ -45,7 +53,7 @@ function remainText(expiresAt: number) {
     return `${Math.floor(s / 60)} 分钟后过期`
   if (s < 86400)
     return `${Math.floor(s / 3600)} 小时后过期`
-  return `${Math.floor(s / 86400)} 天后过期`
+  return `${Math.round(s / 86400)} 天后过期`
 }
 
 function prettyCode(code: string) {
@@ -206,6 +214,34 @@ function downloadMp(info: IFileInfo, url: string) {
 
 const ttl = ref<number>(86400)
 const burn = ref(false)
+/** 自定义有效期：数字 + 单位，留空表示永久 */
+const customValue = ref('')
+const customUnit = ref(86400)
+
+/** 实际提交的有效期（秒），0 为永久；自定义填写不合法时返回错误提示 */
+const effectiveTtl = computed<{ ttl: number, error?: string }>(() => {
+  if (ttl.value !== CUSTOM_TTL)
+    return { ttl: ttl.value }
+  const raw = customValue.value.trim()
+  if (!raw)
+    return { ttl: 0 }
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n <= 0)
+    return { ttl: 0, error: '有效期请填写正整数' }
+  const sec = n * customUnit.value
+  if (sec < MIN_CUSTOM_TTL || sec > MAX_CUSTOM_TTL)
+    return { ttl: 0, error: '有效期范围为 1 小时 ~ 365 天' }
+  return { ttl: sec }
+})
+
+const customHint = computed(() => {
+  const { ttl: sec, error } = effectiveTtl.value
+  if (error)
+    return error
+  if (!sec)
+    return '留空为永久有效，不会自动删除，不需要时请手动删除'
+  return `${sec % 86400 ? `${sec / 3600} 小时` : `${sec / 86400} 天`}后自动删除`
+})
 
 interface UploadItem {
   id: number
@@ -226,6 +262,8 @@ const uploading = computed(() => uploads.value.some(u => u.status === 'waiting' 
 function addFiles(files: { name: string, size: number, file?: File, path?: string }[]) {
   if (!loggedIn.value)
     return toLogin()
+  if (effectiveTtl.value.error)
+    return toast(effectiveTtl.value.error)
   for (const f of files.slice(0, 10)) {
     const item: UploadItem = { id: ++seq, name: f.name, size: f.size, progress: 0, status: 'waiting', file: f.file, path: f.path }
     if (!f.size) {
@@ -273,7 +311,7 @@ async function runQueue() {
 }
 
 function uploadOne(item: UploadItem, onProgress: (p: number) => void): Promise<IFileSummary> {
-  const query = { expiresIn: String(ttl.value), burnAfterRead: String(burn.value) }
+  const query = { expiresIn: String(effectiveTtl.value.ttl), burnAfterRead: String(burn.value) }
   // #ifdef H5
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -580,6 +618,14 @@ onUnload(cleanup)
             <text class="w-60px shrink-0">有效期</text>
             <ot-segmented v-model="ttl" :options="TTL_OPTIONS" size="small" />
           </view>
+          <view v-if="ttl === CUSTOM_TTL" class="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <text class="w-60px shrink-0" />
+            <view class="ot-fd__ttl-input">
+              <input v-model="customValue" type="number" class="ot-mono min-w-0 flex-1" placeholder="留空为永久" :maxlength="4">
+            </view>
+            <ot-segmented v-model="customUnit" :options="UNIT_OPTIONS" size="small" />
+            <text class="text-12px" :class="effectiveTtl.error ? 'text-red-500' : 'text-muted'">{{ customHint }}</text>
+          </view>
           <view class="flex items-center gap-3">
             <text class="w-60px shrink-0">阅后即焚</text>
             <wd-switch v-model="burn" size="20px" />
@@ -658,7 +704,7 @@ onUnload(cleanup)
     </template>
 
     <view class="px-1 text-12px text-muted leading-20px">
-      文件存放在 Cloudflare R2，到期后自动删除（每 15 分钟清理一次）。拿到取件码或链接的人无需登录即可下载，请只发给信任的人。每人最多同时保留 50 个文件、共 1 GB。
+      文件存放在 Cloudflare R2，到期后自动删除（每 15 分钟清理一次，永久有效的除外）。拿到取件码或链接的人无需登录即可下载，请只发给信任的人。每人最多同时保留 50 个文件、共 1 GB。
     </view>
 
     <!-- #ifdef H5 -->
@@ -731,6 +777,18 @@ onUnload(cleanup)
   &:hover {
     border-color: #14b8a6;
   }
+}
+
+.ot-fd__ttl-input {
+  display: flex;
+  align-items: center;
+  width: 110px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--ot-text);
+  background: var(--ot-fill);
 }
 
 .ot-fd__upload {

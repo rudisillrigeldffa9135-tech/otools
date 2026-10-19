@@ -13,8 +13,8 @@ export interface IFileSummary {
   burned: boolean
   /** 被他人下载的次数 */
   downloads: number
-  /** 秒级时间戳 */
-  expiresAt: number
+  /** 秒级时间戳；null 表示永久有效 */
+  expiresAt: number | null
   createdAt: number
 }
 
@@ -24,8 +24,11 @@ export interface IFileInfo extends IFileSummary {
   downloadPath: string
 }
 
-/** 可选有效期（秒）：1 小时 / 1 天 / 3 天 / 7 天 */
-export const FILE_TTLS = [3600, 86400, 3 * 86400, 7 * 86400] as const
+/** 常用有效期（秒）：1 小时 / 1 天 / 3 天 / 7 天 / 30 天 */
+export const FILE_TTLS = [3600, 86400, 3 * 86400, 7 * 86400, 30 * 86400] as const
+/** 自定义有效期范围（秒）：1 小时 ~ 365 天；0 表示永久 */
+export const MIN_CUSTOM_TTL = 3600
+export const MAX_CUSTOM_TTL = 365 * 86400
 /** 网页版单个文件上限；小程序为 50 MB */
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
 export const MAX_MP_FILE_SIZE = 50 * 1024 * 1024

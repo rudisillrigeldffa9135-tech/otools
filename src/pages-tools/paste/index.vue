@@ -58,7 +58,7 @@ function remainText(expiresAt: number | null) {
     return `${Math.floor(s / 60)} 分钟后过期`
   if (s < 86400)
     return `${Math.floor(s / 3600)} 小时后过期`
-  return `${Math.floor(s / 86400)} 天后过期`
+  return `${Math.round(s / 86400)} 天后过期`
 }
 
 /* ---------------- 发送 ---------------- */

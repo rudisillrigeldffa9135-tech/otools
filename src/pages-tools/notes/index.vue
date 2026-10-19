@@ -7,6 +7,9 @@ import { userKey } from '@/utils/user-storage'
 import { getPageUrl } from '@/utils/site'
 import QrView from '../qrcode/components/qr-view.vue'
 import MdView from './components/md-view.vue'
+// #ifdef H5
+import H5Textarea from './components/h5-textarea'
+// #endif
 import { countText } from './markdown'
 import { derivePreview, deriveTitle } from './note-text'
 
@@ -97,7 +100,39 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined
 /** 每次输入 +1，用来判断保存期间是否又有新输入 */
 let editSeq = 0
 
-const stats = computed(() => countText(current.value?.content ?? ''))
+/**
+ * 输入框显示的文字。只在「外部」替换内容时（打开便签、工具栏插入、恢复草稿等）更新，
+ * 打字时不写回：uni 的 textarea 会把输入事件节流 100ms、把 value 变化延迟 100ms 写回，
+ * 打字快或用输入法组字时，旧值会覆盖刚输入的内容，光标跳到末尾；小程序 setData 回写也有同样问题。
+ */
+const editorValue = ref('')
+function setEditorText(text: string) {
+  if (editorValue.value !== text) {
+    editorValue.value = text
+    return
+  }
+  // 值没变时 Vue 不会更新输入框，而输入框里可能已经是打字后的内容，先改一下再改回来强制刷新
+  editorValue.value = `${text} `
+  nextTick(() => (editorValue.value = text))
+}
+// 切换便签（current 整个替换）时载入新内容
+watch(() => current.value, c => setEditorText(c?.content ?? ''))
+// 从「预览」切回编辑时输入框会重新创建，先同步成最新内容
+watch(mode, () => (editorValue.value = current.value?.content ?? ''))
+
+/** 预览与统计稍微延后，长文档打字时不卡 */
+const previewSource = ref('')
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => current.value?.content ?? '', (v, old) => {
+  clearTimeout(previewTimer)
+  // 打开 / 切换便签时立即显示
+  if (!old || Math.abs(v.length - old.length) > 200)
+    previewSource.value = v
+  else
+    previewTimer = setTimeout(() => (previewSource.value = v), 150)
+}, { immediate: true })
+
+const stats = computed(() => countText(previewSource.value))
 const title = computed(() => deriveTitle(current.value?.content ?? '') || '无标题')
 
 const statusText = computed(() => {
@@ -128,7 +163,13 @@ interface Draft {
   version?: number
   at: number
 }
+let draftTimer: ReturnType<typeof setTimeout> | undefined
+function scheduleDraft() {
+  clearTimeout(draftTimer)
+  draftTimer = setTimeout(writeDraft, 400)
+}
 function writeDraft() {
+  clearTimeout(draftTimer)
   const c = current.value
   if (!c)
     return
@@ -138,6 +179,7 @@ function writeDraft() {
   catch {}
 }
 function clearDraft() {
+  clearTimeout(draftTimer)
   try {
     uni.removeStorageSync(userKey(DRAFT_KEY))
   }
@@ -210,16 +252,37 @@ async function save(force = false) {
     scheduleSave()
 }
 
-function onInput(e: any) {
+function applyInput(value: string, cursorAt?: number | null) {
   const c = current.value
   if (!c)
     return
-  c.content = e.detail.value
-  cursor.value = e.detail.cursor ?? c.content.length
+  c.content = value
+  cursor.value = cursorAt ?? value.length
   editSeq++
   dirty.value = true
-  writeDraft()
+  scheduleDraft()
   scheduleSave()
+}
+
+// #ifdef H5
+/** H5 直接用原生 textarea：输入事件不节流，也不会被回写打断输入法 */
+function onNativeInput(e: Event) {
+  const el = e.target as HTMLTextAreaElement
+  applyInput(el.value, el.selectionEnd)
+}
+// #endif
+
+// #ifndef H5
+function onMpInput(e: any) {
+  applyInput(e.detail.value, e.detail.cursor)
+}
+// #endif
+
+function onEditorBlur() {
+  editorFocus.value = false
+  if (dirty.value)
+    writeDraft()
+  save()
 }
 
 /** 切换便签前先把未保存的内容存掉 */
@@ -428,6 +491,38 @@ function exportMarkdown() {
   // #endif
 }
 
+/* ---------------- 全屏编辑 ---------------- */
+
+const fullscreen = ref(false)
+
+function toggleFullscreen(on = !fullscreen.value) {
+  fullscreen.value = on
+  // #ifdef H5
+  // 同时请求浏览器全屏（隐藏地址栏等）；不支持或被拒绝时仍是铺满页面的编辑区
+  try {
+    if (on && !document.fullscreenElement)
+      document.documentElement.requestFullscreen?.()?.catch(() => {})
+    else if (!on && document.fullscreenElement)
+      document.exitFullscreen?.()?.catch(() => {})
+  }
+  catch {}
+  document.body.style.overflow = on ? 'hidden' : ''
+  // #endif
+}
+
+// #ifdef H5
+/** 按 Esc 退出浏览器全屏时，同步退出全屏编辑 */
+function onFullscreenChange() {
+  if (!document.fullscreenElement && fullscreen.value)
+    toggleFullscreen(false)
+}
+// #endif
+
+watch(() => current.value, (c) => {
+  if (!c && fullscreen.value)
+    toggleFullscreen(false)
+})
+
 /* ---------------- 编辑器工具栏 ---------------- */
 
 // #ifdef H5
@@ -469,13 +564,15 @@ function insert(before: string, after = '', placeholder = '', line = false) {
   cursor.value = selTo
   editSeq++
   dirty.value = true
-  writeDraft()
+  setEditorText(c.content)
+  scheduleDraft()
   scheduleSave()
   nextTick(() => {
     // #ifdef H5
     const t = editorEl()
     if (t) {
-      t.value = c.content
+      if (t.value !== c.content)
+        t.value = c.content
       t.focus()
       t.setSelectionRange(selFrom, selTo)
     }
@@ -512,6 +609,11 @@ function onKeydown(e: KeyboardEvent) {
     save()
     return
   }
+  if (e.key === 'Escape' && fullscreen.value) {
+    e.preventDefault()
+    toggleFullscreen(false)
+    return
+  }
   if (e.key === 'Tab' && target.tagName === 'TEXTAREA' && target.closest('.ot-notes__editor')) {
     e.preventDefault()
     insert('  ')
@@ -519,6 +621,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 function onBeforeUnload(e: BeforeUnloadEvent) {
   if (dirty.value) {
+    writeDraft()
     e.preventDefault()
     e.returnValue = ''
   }
@@ -559,6 +662,7 @@ async function restoreDraft() {
     const c = current.value as Current | undefined
     if (c?.id === d.id) {
       c.content = d.content
+      setEditorText(d.content)
       // 用草稿当时的版本保存，期间若其他设备改过会提示冲突
       c.version = d.version
       dirty.value = true
@@ -577,6 +681,7 @@ function discardDraft() {
 onShow(() => {
   // #ifdef H5
   document.addEventListener('keydown', onKeydown)
+  document.addEventListener('fullscreenchange', onFullscreenChange)
   window.addEventListener('beforeunload', onBeforeUnload)
   window.addEventListener('resize', onResize)
   // #endif
@@ -584,16 +689,23 @@ onShow(() => {
 function unbind() {
   // #ifdef H5
   document.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
   window.removeEventListener('beforeunload', onBeforeUnload)
   window.removeEventListener('resize', onResize)
   // #endif
 }
 onHide(() => {
   unbind()
+  if (dirty.value)
+    writeDraft()
   flush()
 })
 onUnload(() => {
   unbind()
+  if (fullscreen.value)
+    toggleFullscreen(false)
+  if (dirty.value)
+    writeDraft()
   flush()
 })
 
@@ -641,9 +753,10 @@ const showList = computed(() => wide.value || !current.value)
       </view>
 
       <!-- 编辑器 -->
-      <view v-if="current" class="ot-notes__main">
+      <view v-if="current" class="ot-notes__main" :class="{ 'is-fullscreen': fullscreen }">
         <view class="ot-notes__bar">
-          <view v-if="!wide" class="i-carbon-arrow-left cursor-pointer p-1 text-18px text-sub" @click="backToList" />
+          <view v-if="!wide && !fullscreen" class="i-carbon-arrow-left cursor-pointer p-1 text-18px text-sub" @click="backToList" />
+          <text v-if="fullscreen" class="ot-notes__fs-title">{{ title }}</text>
           <ot-segmented v-model="mode" :options="modeOptions" size="small" />
           <view class="flex-1" />
           <text class="ot-notes__status" :class="{ 'is-error': saveError || conflict, 'is-pending': dirty && !saveError && !conflict }">
@@ -651,6 +764,12 @@ const showList = computed(() => wide.value || !current.value)
           </text>
           <view v-if="saveError" class="ot-notes__link text-12px" @click="save()">
             重试
+          </view>
+          <view
+            class="ot-notes__icon-btn" :title="fullscreen ? '退出全屏（Esc）' : '全屏编辑'"
+            @click="toggleFullscreen()"
+          >
+            <view :class="fullscreen ? 'i-carbon-minimize' : 'i-carbon-maximize'" />
           </view>
         </view>
 
@@ -669,9 +788,19 @@ const showList = computed(() => wide.value || !current.value)
 
         <view class="ot-notes__body" :class="`is-${mode}`">
           <view v-if="mode !== 'preview'" class="ot-notes__editor">
+            <!-- #ifdef H5 -->
+            <h5-textarea
+              class="ot-notes__textarea ot-mono"
+              :value="editorValue"
+              placeholder="支持 Markdown：# 标题、**粗体**、- 列表、- [ ] 待办、```代码块``` …&#10;输入后自动保存"
+              @input="onNativeInput"
+              @blur="onEditorBlur"
+            />
+            <!-- #endif -->
+            <!-- #ifndef H5 -->
             <textarea
               class="ot-notes__textarea ot-mono"
-              :value="current.content"
+              :value="editorValue"
               :maxlength="-1"
               :focus="editorFocus"
               :selection-start="selStart"
@@ -681,19 +810,20 @@ const showList = computed(() => wide.value || !current.value)
               :disable-default-padding="true"
               placeholder="支持 Markdown：# 标题、**粗体**、- 列表、- [ ] 待办、```代码块``` …&#10;输入后自动保存"
               placeholder-class="ot-notes__placeholder"
-              @input="onInput"
-              @blur="editorFocus = false; save()"
+              @input="onMpInput"
+              @blur="onEditorBlur"
             />
+            <!-- #endif -->
           </view>
           <scroll-view v-if="mode !== 'edit'" scroll-y class="ot-notes__preview">
-            <md-view v-if="current.content.trim()" :source="current.content" />
+            <md-view v-if="previewSource.trim()" :source="previewSource" />
             <view v-else class="py-10 text-center text-13px text-muted">
               预览区：在左侧输入 Markdown
             </view>
           </scroll-view>
         </view>
 
-        <view class="ot-notes__foot">
+        <view v-show="!fullscreen" class="ot-notes__foot">
           <text>{{ stats.words }} 字 · {{ stats.lines }} 行</text>
           <view class="flex-1" />
           <view class="ot-notes__action" @click="copyText(current.content)">
@@ -862,6 +992,64 @@ const showList = computed(() => wide.value || !current.value)
     align-items: center;
     justify-content: center;
   }
+
+  // 全屏编辑：铺满整个窗口，编辑区 / 预览区占满剩余高度
+  &.is-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    padding: 12px max(16px, calc((100vw - 1400px) / 2)) 16px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    border: none;
+    border-radius: 0;
+
+    .ot-notes__body {
+      flex: 1;
+      min-height: 0;
+    }
+
+    .ot-notes__textarea,
+    .ot-notes__preview {
+      height: 100%;
+      min-height: 0;
+      font-size: 15px;
+    }
+
+    .is-preview .ot-notes__preview {
+      height: 100%;
+      overflow-y: auto;
+    }
+  }
+}
+
+.ot-notes__fs-title {
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ot-text);
+}
+
+.ot-notes__icon-btn {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 17px;
+  color: var(--ot-text-2);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--wot-color-theme);
+    background: var(--ot-fill);
+  }
 }
 
 .ot-notes__bar {
@@ -970,10 +1158,15 @@ const showList = computed(() => wide.value || !current.value)
   color: var(--ot-text);
   background: var(--ot-fill);
   border: 1px solid transparent;
+  outline: none;
   resize: none;
 
   &:focus {
     border-color: var(--wot-color-theme);
+  }
+
+  &::placeholder {
+    color: var(--ot-text-3);
   }
 }
 

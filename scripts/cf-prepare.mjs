@@ -78,7 +78,12 @@ function ensureD1() {
   console.log(`D1：使用数据库 ${name} (${db.uuid})`)
 }
 
-const LIFECYCLE_RULE = 'expire-after-8-days'
+/** 旧版本对整个存储桶生效的规则（文件最长 7 天时设置），支持 30 天 / 永久后需要删掉 */
+const LEGACY_LIFECYCLE_RULE = 'expire-after-8-days'
+/** 有效期不超过 31 天的文件放在 tmp/ 前缀下（见 worker/src/files.ts 的 objectKey），32 天后自动删除 */
+const LIFECYCLE_RULE = 'tmp-expire-after-32-days'
+const LIFECYCLE_PREFIX = 'tmp/'
+const LIFECYCLE_DAYS = '32'
 
 /** 去掉 R2 绑定（只改 CI 工作区），文件快传接口会提示未开通 */
 function dropR2Binding(reason) {
@@ -88,8 +93,9 @@ function dropR2Binding(reason) {
 }
 
 /**
- * 3. R2：存储桶不存在时自动创建，并加一条「对象 8 天后自动删除」的生命周期规则，
- *    作为定时清理之外的兜底（文件最长有效期 7 天）。账户未开通 R2 或 Token 没有 R2 权限时不阻断部署。
+ * 3. R2：存储桶不存在时自动创建，并给 tmp/ 前缀加一条「32 天后自动删除」的生命周期规则，
+ *    作为定时清理之外的兜底（tmp/ 下的文件有效期最长 31 天；更长或永久的文件在 keep/ 下，不自动删除）。
+ *    账户未开通 R2 或 Token 没有 R2 权限时不阻断部署。
  */
 function ensureR2() {
   const config = fs.readFileSync(CONFIG, 'utf8')
@@ -115,9 +121,14 @@ function ensureR2() {
   }
   try {
     const rules = wrangler(['r2', 'bucket', 'lifecycle', 'list', bucket])
+    // 旧规则会把 30 天 / 永久的文件提前删掉，必须先移除
+    if (rules.includes(LEGACY_LIFECYCLE_RULE)) {
+      wrangler(['r2', 'bucket', 'lifecycle', 'remove', bucket, '--name', LEGACY_LIFECYCLE_RULE])
+      console.log(`R2：已移除旧的生命周期规则 ${LEGACY_LIFECYCLE_RULE}`)
+    }
     if (!rules.includes(LIFECYCLE_RULE)) {
-      wrangler(['r2', 'bucket', 'lifecycle', 'add', bucket, LIFECYCLE_RULE, '--expire-days', '8', '--force'])
-      console.log('R2：已添加生命周期规则（对象 8 天后自动删除）')
+      wrangler(['r2', 'bucket', 'lifecycle', 'add', bucket, LIFECYCLE_RULE, LIFECYCLE_PREFIX, '--expire-days', LIFECYCLE_DAYS, '--force'])
+      console.log(`R2：已添加生命周期规则（${LIFECYCLE_PREFIX} 下的对象 ${LIFECYCLE_DAYS} 天后自动删除）`)
     }
   }
   catch (e) {

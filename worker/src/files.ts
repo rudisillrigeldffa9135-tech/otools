@@ -27,8 +27,30 @@ interface FileRow {
   created_at: number
 }
 
-/** 有效期：1 小时 / 1 天 / 3 天 / 7 天。最长 7 天，节省存储空间 */
-export const FILE_TTLS = [3600, 86400, 3 * 86400, 7 * 86400]
+/** 常用有效期：1 小时 / 1 天 / 3 天 / 7 天 / 30 天；也可自定义（见 isValidTtl），0 表示永久 */
+export const FILE_TTLS = [3600, 86400, 3 * 86400, 7 * 86400, 30 * 86400]
+/** 自定义有效期范围：1 小时 ~ 365 天 */
+export const MIN_CUSTOM_TTL = 3600
+export const MAX_CUSTOM_TTL = 365 * 86400
+/**
+ * R2 对象按有效期放在不同前缀下：
+ * - tmp/：有效期不超过 31 天，存储桶生命周期规则 32 天后自动删除，作为定时清理的兜底
+ * - keep/：更长或永久，不设自动删除，只由定时清理 / 手动删除
+ */
+export const SHORT_TTL_LIMIT = 31 * 86400
+
+export function isValidTtl(ttl: number) {
+  return ttl === 0 || (Number.isInteger(ttl) && ttl >= MIN_CUSTOM_TTL && ttl <= MAX_CUSTOM_TTL)
+}
+
+export function objectKey(userId: number, ttl: number, id = crypto.randomUUID()) {
+  return `${ttl > 0 && ttl <= SHORT_TTL_LIMIT ? 'tmp' : 'keep'}/${userId}/${id}`
+}
+
+/** expires_at 为 0 表示永久有效 */
+function isExpired(row: Pick<FileRow, 'expires_at'>, t = now()) {
+  return row.expires_at > 0 && row.expires_at <= t
+}
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
 export const MAX_FORM_FILE_SIZE = 50 * 1024 * 1024
 /** 每个用户同时保留的文件数与总大小 */
@@ -56,7 +78,8 @@ function toSummary(row: FileRow) {
     burnAfterRead: !!row.burn_after_read,
     burned: !!row.burned,
     downloads: row.downloads,
-    expiresAt: row.expires_at,
+    /** null 表示永久有效 */
+    expiresAt: row.expires_at || null,
     createdAt: row.created_at,
   }
 }
@@ -127,7 +150,7 @@ async function insertRow(env: Env, user: SessionUser, meta: { key: string, name:
       return await env.DB.prepare(
         `INSERT INTO files (user_id, code, r2_key, name, size, mime, burn_after_read, expires_at, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
-      ).bind(user.id, randomPasteCode(), meta.key, meta.name, meta.size, meta.mime, meta.burn ? 1 : 0, t + meta.ttl, t).first<FileRow>()
+      ).bind(user.id, randomPasteCode(), meta.key, meta.name, meta.size, meta.mime, meta.burn ? 1 : 0, meta.ttl ? t + meta.ttl : 0, t).first<FileRow>()
     }
     catch (e) {
       if (!isUniqueViolation(e))
@@ -138,7 +161,7 @@ async function insertRow(env: Env, user: SessionUser, meta: { key: string, name:
 }
 
 async function checkQuota(env: Env, userId: number, size: number) {
-  const usage = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM files WHERE user_id = ? AND expires_at > ? AND burned = 0')
+  const usage = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM files WHERE user_id = ? AND (expires_at = 0 OR expires_at > ?) AND burned = 0')
     .bind(userId, now())
     .first<{ n: number, bytes: number }>()
   if ((usage?.n ?? 0) >= MAX_FILES_PER_USER)
@@ -148,9 +171,10 @@ async function checkQuota(env: Env, userId: number, size: number) {
 }
 
 function parseOptions(get: (k: string) => string | null) {
-  const ttl = Number(get('expiresIn'))
-  if (!FILE_TTLS.includes(ttl))
-    throw new ApiError(400, '有效期不正确')
+  const raw = get('expiresIn')
+  const ttl = Number(raw)
+  if (raw === null || raw === '' || !isValidTtl(ttl))
+    throw new ApiError(400, '有效期不正确：可选 1 小时 ~ 365 天，或永久')
   return { ttl, burn: get('burnAfterRead') === 'true' || get('burnAfterRead') === '1' }
 }
 
@@ -169,8 +193,9 @@ export async function uploadFile(req: Request, env: Env) {
   const r2 = bucket(env)
   const url = new URL(req.url)
   const contentType = req.headers.get('Content-Type') || ''
-  const key = `files/${user.id}/${crypto.randomUUID()}`
 
+  // 对象前缀取决于有效期，解析参数后再生成
+  let key = ''
   let meta: { name: string, size: number, mime: string, ttl: number, burn: boolean }
   if (contentType.startsWith('multipart/form-data')) {
     const declared = Number(req.headers.get('Content-Length') || 0)
@@ -187,6 +212,7 @@ export async function uploadFile(req: Request, env: Env) {
     if (!meta.size)
       throw new ApiError(400, '不能上传空文件')
     await checkQuota(env, user.id, meta.size)
+    key = objectKey(user.id, meta.ttl)
     await r2.put(key, file.stream(), { httpMetadata: { contentType: meta.mime } })
   }
   else {
@@ -206,6 +232,7 @@ export async function uploadFile(req: Request, env: Env) {
     meta = { name: sanitizeName(name), size, mime: sanitizeMime(contentType), ...opts }
     await checkQuota(env, user.id, size)
     // 流式写入，不占用 Worker 内存
+    key = objectKey(user.id, meta.ttl)
     await r2.put(key, req.body, { httpMetadata: { contentType: meta.mime } })
   }
 
@@ -224,7 +251,7 @@ export async function uploadFile(req: Request, env: Env) {
 
 export async function listFiles(req: Request, env: Env) {
   const user = await requireUser(req, env)
-  const { results } = await env.DB.prepare('SELECT * FROM files WHERE user_id = ? AND expires_at > ? AND burned = 0 ORDER BY created_at DESC, id DESC')
+  const { results } = await env.DB.prepare('SELECT * FROM files WHERE user_id = ? AND (expires_at = 0 OR expires_at > ?) AND burned = 0 ORDER BY created_at DESC, id DESC')
     .bind(user.id, now())
     .all<FileRow>()
   return results.map(toSummary)
@@ -265,7 +292,7 @@ export async function deleteUserFiles(env: Env, userId: number) {
 export async function cleanupExpiredFiles(env: Env) {
   let total = 0
   for (let round = 0; round < 10; round++) {
-    const { results } = await env.DB.prepare('SELECT id, r2_key FROM files WHERE expires_at <= ? LIMIT 500').bind(now()).all<FileRow>()
+    const { results } = await env.DB.prepare('SELECT id, r2_key FROM files WHERE expires_at > 0 AND expires_at <= ? LIMIT 500').bind(now()).all<FileRow>()
     if (!results.length)
       break
     await removeRows(env, results)
@@ -287,8 +314,8 @@ export async function getFileInfo(req: Request, env: Env, params: Record<string,
   await assertNotLimited(env, limitKey, user ? PICKUP_LIMIT_USER : PICKUP_LIMIT_ANONYMOUS)
   const row = await env.DB.prepare('SELECT * FROM files WHERE code = ?').bind(code).first<FileRow>()
   const t = now()
-  if (!row || row.expires_at <= t || row.burned) {
-    if (row && row.expires_at <= t)
+  if (!row || isExpired(row, t) || row.burned) {
+    if (row && isExpired(row, t))
       await removeRows(env, [row])
     await recordFailure(env, limitKey, PICKUP_WINDOW)
     throw new ApiError(404, row?.burned ? '文件已被下载并销毁' : '取件码不存在或已过期')
@@ -324,12 +351,12 @@ async function serveDownload(req: Request, env: Env, params: Record<string, stri
     throw new ApiError(403, '下载链接无效或已过期，请重新输入取件码')
   const t = now()
   let row = await env.DB.prepare('SELECT * FROM files WHERE code = ?').bind(code).first<FileRow>()
-  if (!row || row.expires_at <= t || row.burned)
+  if (!row || isExpired(row, t) || row.burned)
     throw new ApiError(404, '文件不存在、已过期或已被销毁')
 
   if (!auth.owner) {
     row = row.burn_after_read
-      ? await env.DB.prepare('UPDATE files SET burned = 1, downloads = downloads + 1, expires_at = MIN(expires_at, ?) WHERE id = ? AND burned = 0 RETURNING *')
+      ? await env.DB.prepare('UPDATE files SET burned = 1, downloads = downloads + 1, expires_at = CASE WHEN expires_at = 0 THEN ?1 ELSE MIN(expires_at, ?1) END WHERE id = ?2 AND burned = 0 RETURNING *')
           .bind(t + BURN_GRACE, row.id)
           .first<FileRow>()
       : await env.DB.prepare('UPDATE files SET downloads = downloads + 1 WHERE id = ? RETURNING *').bind(row.id).first<FileRow>()

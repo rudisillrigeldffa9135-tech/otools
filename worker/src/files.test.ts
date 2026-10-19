@@ -1,6 +1,6 @@
 // @vitest-environment node
 import type { Env } from './lib'
-import { contentDisposition, sanitizeName, signDownload, verifyDownload } from './files'
+import { contentDisposition, FILE_TTLS, isValidTtl, objectKey, sanitizeName, signDownload, verifyDownload } from './files'
 
 const env = { VAULT_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))) } as Env
 
@@ -47,5 +47,24 @@ describe('下载签名', () => {
     expect(await verifyDownload(env, 'XYZ23K', token, t)).toBeNull()
     expect(await verifyDownload(env, 'ABC23K', token.replace('.0.', '.1.'), t)).toBeNull()
     expect(await verifyDownload(env, 'ABC23K', 'garbage', t)).toBeNull()
+  })
+})
+
+describe('有效期与存储位置', () => {
+  it('常用有效期、自定义范围内的有效期与永久（0）都合法', () => {
+    for (const ttl of [...FILE_TTLS, 0, 3600 * 5, 90 * 86400, 365 * 86400])
+      expect(isValidTtl(ttl)).toBe(true)
+  })
+
+  it('拒绝范围外、非整数或非数字的有效期', () => {
+    for (const ttl of [60, 3599, 365 * 86400 + 1, 1.5 * 3600 + 0.5, -3600, Number.NaN])
+      expect(isValidTtl(ttl)).toBe(false)
+  })
+
+  it('31 天内的文件放在 tmp/（有生命周期兜底），更长或永久的放在 keep/', () => {
+    expect(objectKey(3, 30 * 86400, 'x')).toBe('tmp/3/x')
+    expect(objectKey(3, 31 * 86400, 'x')).toBe('tmp/3/x')
+    expect(objectKey(3, 31 * 86400 + 3600, 'x')).toBe('keep/3/x')
+    expect(objectKey(3, 0, 'x')).toBe('keep/3/x')
   })
 })
