@@ -71,11 +71,19 @@ route('DELETE', '/api/links/:id', shortlink.deleteLink)
 route('GET', '/api/notes', notes.listNotes)
 route('POST', '/api/notes', notes.createNote)
 route('GET', '/api/notes/:id', notes.getNote)
+route('GET', '/api/notes/:id/versions', notes.listVersions)
+route('DELETE', '/api/notes/:id/versions', notes.clearVersions)
+route('GET', '/api/notes/:id/versions/:vid', notes.getVersion)
+route('POST', '/api/notes/:id/versions/:vid/restore', notes.restoreVersion)
 route('PUT', '/api/notes/:id', notes.updateNote)
 route('DELETE', '/api/notes/:id', notes.deleteNote)
 route('POST', '/api/notes/:id/share', notes.shareNote)
 route('DELETE', '/api/notes/:id/share', notes.unshareNote)
 route('GET', '/api/shared/notes/:code', notes.getSharedNote)
+route('GET', '/api/note-folders', notes.listFolders)
+route('POST', '/api/note-folders', notes.createFolder)
+route('PUT', '/api/note-folders/:id', notes.renameFolder)
+route('DELETE', '/api/note-folders/:id', notes.deleteFolder)
 
 route('GET', '/api/ip', network.myIp)
 route('GET', '/api/dns', dns.lookup)
@@ -119,10 +127,11 @@ async function handleApi(req: Request, env: Env, pathname: string) {
   return pathMatched ? fail(405, '请求方法不支持') : fail(404, '接口不存在')
 }
 
-/** 定时清理：过期文件（含 R2 对象）、快传、限流计数、缓存与会话 */
+/** 定时清理：过期文件（含 R2 对象）、快传、便签历史版本、限流计数、缓存与会话 */
 async function cleanup(env: Env) {
   const t = now()
   const removedFiles = await files.cleanupExpiredFiles(env)
+  await notes.cleanupNoteVersions(env)
   await env.DB.batch([
     env.DB.prepare('DELETE FROM pastes WHERE expires_at > 0 AND expires_at <= ?').bind(t),
     env.DB.prepare('DELETE FROM rate_limits WHERE reset_at <= ?').bind(t),

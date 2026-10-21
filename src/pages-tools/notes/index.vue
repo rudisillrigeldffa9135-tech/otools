@@ -1,16 +1,21 @@
 <script lang="ts" setup>
-import type { INoteListItem, ShareTtl } from '@/api/notes'
+import type { INote, INoteFolder, INoteListItem, IShareMeta, ShareTtl } from '@/api/notes'
+import type { OutlineItem } from './markdown'
 import dayjs from 'dayjs'
-import { createNote, deleteNote, getNote, listNotes, shareNote, unshareNote, updateNote } from '@/api/notes'
+import { createNote, deleteNote, getNote, listFolders, listNotes, shareNote, unshareNote, updateNote } from '@/api/notes'
 import { copyText, toast } from '@/utils/common'
 import { userKey } from '@/utils/user-storage'
 import { getPageUrl } from '@/utils/site'
 import QrView from '../qrcode/components/qr-view.vue'
 import MdView from './components/md-view.vue'
+import NoteFolders from './components/note-folders.vue'
+import NoteHistory from './components/note-history.vue'
+import NoteOutline from './components/note-outline.vue'
 // #ifdef H5
 import H5Textarea from './components/h5-textarea'
+import { createScrollSync } from './scroll-sync'
 // #endif
-import { countText } from './markdown'
+import { countText, extractOutline } from './markdown'
 import { derivePreview, deriveTitle } from './note-text'
 
 definePage({
@@ -21,6 +26,26 @@ const MAX_LENGTH = 100_000
 /** 停止输入多久后自动保存 */
 const SAVE_DELAY = 800
 const DRAFT_KEY = 'ot-notes-draft'
+/** 按用户记住的界面偏好 */
+const FOLDER_KEY = 'ot-notes-folder'
+const OUTLINE_KEY = 'ot-notes-outline'
+const SYNC_KEY = 'ot-notes-scroll-sync'
+
+function readPref<T>(key: string, fallback: T): T {
+  try {
+    const v = uni.getStorageSync(userKey(key))
+    return v === '' || v === undefined || v === null ? fallback : v as T
+  }
+  catch {
+    return fallback
+  }
+}
+function writePref(key: string, value: unknown) {
+  try {
+    uni.setStorageSync(userKey(key), value)
+  }
+  catch {}
+}
 
 /** 宽屏同时显示列表与编辑器，窄屏二选一 */
 function windowWidth() {
@@ -46,13 +71,6 @@ const list = ref<INoteListItem[]>([])
 const listLoading = ref(false)
 const keyword = ref('')
 
-const filtered = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  if (!kw)
-    return list.value
-  return list.value.filter(n => `${n.title} ${n.preview}`.toLowerCase().includes(kw))
-})
-
 async function loadList() {
   listLoading.value = true
   try {
@@ -77,12 +95,80 @@ interface Current {
   /** 编辑开始时（或上次保存后）的版本 */
   version?: number
   pinned: boolean
+  folderId: number | null
   updatedAt?: number
   shareCode?: string | null
   shareExpiresAt?: number
+  shareLocked?: boolean
+  /** 分享访问密码，只有自己能看到 */
+  sharePassword?: string | null
+}
+
+function toCurrent(note: INote): Current {
+  return {
+    id: note.id,
+    content: note.content,
+    version: note.version,
+    pinned: note.pinned,
+    folderId: note.folderId,
+    updatedAt: note.updatedAt,
+    shareCode: note.shareCode,
+    shareExpiresAt: note.shareExpiresAt,
+    shareLocked: note.shareLocked,
+    sharePassword: note.sharePassword,
+  }
 }
 
 const current = ref<Current>()
+
+/* ---------------- 文件夹 ---------------- */
+
+type FolderFilter = 'all' | 'none' | number
+const folders = ref<INoteFolder[]>([])
+const activeFolder = ref<FolderFilter>(readPref<FolderFilter>(FOLDER_KEY, 'all'))
+watch(activeFolder, v => writePref(FOLDER_KEY, v))
+
+const folderCounts = computed(() => {
+  const counts: Record<string, number> = { all: list.value.length, none: 0 }
+  for (const n of list.value) {
+    const key = n.folderId ?? 'none'
+    counts[key] = (counts[key] ?? 0) + 1
+  }
+  return counts
+})
+
+function folderName(id?: number | null) {
+  return id ? folders.value.find(f => f.id === id)?.name ?? '' : ''
+}
+
+async function loadFolders() {
+  try {
+    folders.value = await listFolders()
+  }
+  catch {}
+  const a = activeFolder.value
+  if (typeof a === 'number' && !folders.value.some(f => f.id === a))
+    activeFolder.value = 'all'
+}
+
+/** 文件夹删除后，其中的便签变成未分类 */
+function onFolderDeleted(id: number) {
+  for (const n of list.value) {
+    if (n.folderId === id)
+      n.folderId = null
+  }
+  if (current.value?.folderId === id)
+    current.value.folderId = null
+}
+
+const filtered = computed(() => {
+  const a = activeFolder.value
+  const inFolder = a === 'all' ? list.value : list.value.filter(n => (a === 'none' ? !n.folderId : n.folderId === a))
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw)
+    return inFolder
+  return inFolder.filter(n => `${n.title} ${n.preview}`.toLowerCase().includes(kw))
+})
 /** 编辑器光标与焦点 */
 const cursor = ref(0)
 const editorFocus = ref(false)
@@ -212,7 +298,7 @@ async function save(force = false) {
   try {
     const res = c.id
       ? await updateNote(c.id, { content, baseVersion: c.version, force }, { hideErrorToast: true })
-      : await createNote(content, { hideErrorToast: true })
+      : await createNote(content, c.folderId, { hideErrorToast: true })
     // 保存期间可能已切换到别的便签
     if (current.value === c) {
       c.id = res.id
@@ -306,7 +392,7 @@ async function openNote(id: number) {
   try {
     const note = await getNote(id)
     resetState()
-    current.value = { id: note.id, content: note.content, version: note.version, pinned: note.pinned, updatedAt: note.updatedAt, shareCode: note.shareCode, shareExpiresAt: note.shareExpiresAt }
+    current.value = toCurrent(note)
     if (!wide.value)
       mode.value = note.content ? 'preview' : 'edit'
   }
@@ -319,7 +405,8 @@ async function openNote(id: number) {
 async function newNote(content = '') {
   await flush()
   resetState()
-  current.value = { content, pinned: false }
+  // 正在看某个文件夹时，新便签直接放进这个文件夹
+  current.value = { content, pinned: false, folderId: typeof activeFolder.value === 'number' ? activeFolder.value : null }
   mode.value = wide.value ? 'split' : 'edit'
   if (content) {
     dirty.value = true
@@ -345,7 +432,7 @@ async function reloadLatest() {
   const note = await getNote(c.id)
   resetState()
   clearDraft()
-  current.value = { id: note.id, content: note.content, version: note.version, pinned: note.pinned, updatedAt: note.updatedAt, shareCode: note.shareCode, shareExpiresAt: note.shareExpiresAt }
+  current.value = toCurrent(note)
   toast('已加载最新版本，你的修改已复制')
 }
 
@@ -369,36 +456,77 @@ function shareLink(code?: string | null) {
   return code ? getPageUrl(`/pages-tools/notes/share?c=${code}`) : ''
 }
 
+/** 访问密码 */
+const sharePwdOn = ref(false)
+const sharePwdInput = ref('')
+const PWD_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789'
+
+function randomSharePassword() {
+  // 小程序没有 crypto，退回 Math.random（分享密码只防随手打开，错误次数另有限流）
+  const bytes = typeof crypto !== 'undefined' && crypto.getRandomValues
+    ? crypto.getRandomValues(new Uint8Array(6))
+    : Uint8Array.from({ length: 6 }, () => Math.floor(Math.random() * 256))
+  sharePwdInput.value = Array.from(bytes, b => PWD_CHARS[b % PWD_CHARS.length]).join('')
+}
+// 打开密码开关时自动生成一个
+watch(sharePwdOn, (v) => {
+  if (v && !sharePwdInput.value)
+    randomSharePassword()
+})
+
+/** 密码设置改了但还没保存 */
+const shareDirty = computed(() => !!current.value?.shareCode && (sharePwdOn.value ? sharePwdInput.value.trim() : '') !== (current.value?.sharePassword || ''))
+
+/** 复制给别人的内容：链接，有密码时附上密码 */
+function shareText() {
+  const c = current.value
+  const link = shareLink(c?.shareCode)
+  return c?.sharePassword ? `${link}\n访问密码：${c.sharePassword}` : link
+}
+
 async function openShare() {
   // 分享的是服务器上的版本，先把未保存的修改存掉
   await flush()
   if (!current.value?.id)
     return toast('先输入内容，保存后才能分享')
+  sharePwdOn.value = !!current.value.sharePassword
+  sharePwdInput.value = current.value.sharePassword || ''
   shareOpen.value = true
 }
 
-function applyShare(meta: { id: number, shareCode: string | null, shareExpiresAt: number }) {
+function applyShare(meta: IShareMeta) {
   if (current.value?.id === meta.id) {
     current.value.shareCode = meta.shareCode
     current.value.shareExpiresAt = meta.shareExpiresAt
+    current.value.shareLocked = meta.shareLocked
+    current.value.sharePassword = meta.sharePassword
   }
   const item = list.value.find(n => n.id === meta.id)
   if (item) {
     item.shareCode = meta.shareCode
     item.shareExpiresAt = meta.shareExpiresAt
+    item.shareLocked = meta.shareLocked
   }
 }
 
-/** 开启分享或修改有效期；renew 为 true 时换一个新链接 */
+/** 开启分享或保存有效期 / 密码设置；renew 为 true 时换一个新链接 */
 async function doShare(renew = false) {
   const c = current.value
   if (!c?.id)
     return
+  let password = ''
+  if (sharePwdOn.value) {
+    password = sharePwdInput.value.trim()
+    if (!password)
+      return toast('请填写访问密码，或关闭「访问密码」')
+    if (/\s/.test(password))
+      return toast('访问密码不能包含空格')
+  }
   sharing.value = true
   try {
-    const meta = await shareNote(c.id, shareTtl.value, renew)
+    const meta = await shareNote(c.id, shareTtl.value, renew, password)
     applyShare(meta)
-    copyText(shareLink(meta.shareCode))
+    copyText(shareText())
   }
   catch {}
   finally {
@@ -428,6 +556,52 @@ watch(shareOpen, (v) => {
   if (!v)
     shareQrOpen.value = false
 })
+
+/* ---------------- 移动到文件夹 ---------------- */
+
+const moveOpen = ref(false)
+
+async function moveTo(folderId: number | null) {
+  const c = current.value
+  moveOpen.value = false
+  if (!c || c.folderId === folderId)
+    return
+  if (c.id) {
+    try {
+      await updateNote(c.id, { folderId })
+    }
+    catch {
+      return
+    }
+    const item = list.value.find(n => n.id === c.id)
+    if (item)
+      item.folderId = folderId
+  }
+  c.folderId = folderId
+  toast(`已移到「${folderName(folderId) || '未分类'}」`)
+}
+
+/* ---------------- 历史版本 ---------------- */
+
+const historyOpen = ref(false)
+
+async function openHistory() {
+  // 历史是服务器上的版本，先把未保存的修改存掉
+  await flush()
+  if (!current.value?.id)
+    return toast('便签还没有保存过')
+  historyOpen.value = true
+}
+
+function onRestored(note: INote) {
+  resetState()
+  clearDraft()
+  current.value = toCurrent(note)
+  const item = list.value.find(n => n.id === note.id)
+  if (item)
+    Object.assign(item, { size: note.size, version: note.version, updatedAt: note.updatedAt, title: note.title, preview: derivePreview(note.content) })
+  sortList()
+}
 
 /* ---------------- 置顶、删除、导出 ---------------- */
 
@@ -522,6 +696,93 @@ watch(() => current.value, (c) => {
   if (!c && fullscreen.value)
     toggleFullscreen(false)
 })
+
+/* ---------------- 分栏滚动同步（H5） ---------------- */
+
+const scrollSync = ref<boolean>(readPref(SYNC_KEY, true))
+watch(scrollSync, v => writePref(SYNC_KEY, v))
+
+// #ifdef H5
+const sync = createScrollSync({
+  editor: () => editorEl(),
+  preview: () => document.querySelector<HTMLElement>('.ot-notes__preview'),
+  text: () => current.value?.content ?? '',
+  enabled: () => scrollSync.value && mode.value === 'split',
+  onScroll: updateActiveHeading,
+})
+// #endif
+
+/* ---------------- 大纲 ---------------- */
+
+const outline = computed<OutlineItem[]>(() => extractOutline(previewSource.value))
+/** 宽屏：大纲作为一栏显示（记住开关）；窄屏：弹出层 */
+const showOutline = ref<boolean>(readPref(OUTLINE_KEY, false))
+const outlinePopup = ref(false)
+const activeHeading = ref(-1)
+watch(showOutline, v => writePref(OUTLINE_KEY, v))
+
+function toggleOutline() {
+  if (wide.value || fullscreen.value)
+    showOutline.value = !showOutline.value
+  else
+    outlinePopup.value = true
+}
+
+function updateActiveHeading() {
+  // #ifdef H5
+  const line = sync.topLine()
+  let idx = -1
+  for (let i = 0; i < outline.value.length; i++) {
+    if (outline.value[i].line <= line + 0.5)
+      idx = i
+    else
+      break
+  }
+  activeHeading.value = idx
+  // #endif
+}
+
+function lineOffset(text: string, line: number) {
+  let pos = 0
+  for (let i = 0; i < line; i++) {
+    const next = text.indexOf('\n', pos)
+    if (next === -1)
+      return text.length
+    pos = next + 1
+  }
+  return pos
+}
+
+function jumpTo(item: OutlineItem) {
+  outlinePopup.value = false
+  activeHeading.value = outline.value.indexOf(item)
+  // #ifdef H5
+  nextTick(() => sync.scrollToLine(item.line))
+  // #endif
+  // #ifndef H5
+  // 小程序：把光标放到标题所在行，输入框会滚动到光标处
+  if (mode.value === 'preview')
+    mode.value = 'edit'
+  const pos = lineOffset(current.value?.content ?? '', item.line)
+  selStart.value = pos
+  selEnd.value = pos
+  editorFocus.value = false
+  nextTick(() => (editorFocus.value = true))
+  // #endif
+}
+
+// #ifdef H5
+// 编辑区 / 预览区重新创建后重新绑定
+watch([mode, () => current.value, fullscreen, showOutline, wide], () => nextTick(() => {
+  sync.bind()
+  updateActiveHeading()
+}))
+// 预览重新渲染后，锚点位置需要重新测量
+watch(previewSource, () => nextTick(() => {
+  sync.invalidate()
+  updateActiveHeading()
+}))
+// #endif
 
 /* ---------------- 编辑器工具栏 ---------------- */
 
@@ -627,6 +888,7 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
   }
 }
 function onResize() {
+  sync.invalidate()
   wide.value = window.innerWidth >= 768
   if (!wide.value && mode.value === 'split')
     mode.value = 'edit'
@@ -642,7 +904,7 @@ onLoad(async (query) => {
       pendingDraft.value = draft
   }
   catch {}
-  await loadList()
+  await Promise.all([loadList(), loadFolders()])
   const id = Number(query?.id)
   if (id)
     openNote(id)
@@ -702,6 +964,9 @@ onHide(() => {
 })
 onUnload(() => {
   unbind()
+  // #ifdef H5
+  sync.unbind()
+  // #endif
   if (fullscreen.value)
     toggleFullscreen(false)
   if (dirty.value)
@@ -733,9 +998,10 @@ const showList = computed(() => wide.value || !current.value)
             新建
           </wd-button>
         </view>
+        <note-folders v-model="activeFolder" v-model:folders="folders" :counts="folderCounts" @deleted="onFolderDeleted" />
         <view class="ot-notes__list">
           <view v-if="!filtered.length" class="py-8 text-center text-13px text-muted">
-            {{ listLoading ? '加载中…' : keyword ? '没有匹配的便签' : '还没有便签，点「新建」写第一条' }}
+            {{ listLoading ? '加载中…' : keyword ? '没有匹配的便签' : activeFolder === 'all' ? '还没有便签，点「新建」写第一条' : '这里还没有便签，点「新建」会直接放进来' }}
           </view>
           <view
             v-for="n in filtered" :key="n.id" class="ot-notes__item"
@@ -743,11 +1009,14 @@ const showList = computed(() => wide.value || !current.value)
           >
             <view class="flex items-center gap-1.5">
               <view v-if="n.pinned" class="i-carbon-pin-filled shrink-0 text-12px text-amber-500" />
-              <view v-if="n.shareCode" class="i-carbon-share shrink-0 text-12px text-[var(--wot-color-theme)]" />
+              <view v-if="n.shareCode" :class="n.shareLocked ? 'i-carbon-locked' : 'i-carbon-share'" class="shrink-0 text-12px text-[var(--wot-color-theme)]" />
               <text class="min-w-0 flex-1 truncate text-14px text-main font-600">{{ n.title || '无标题' }}</text>
             </view>
             <text v-if="n.preview" class="ot-ellipsis-2 mt-1 text-12px text-sub leading-18px">{{ n.preview }}</text>
-            <text class="mt-1 text-11px text-muted">{{ formatTime(n.updatedAt) }} · {{ n.size }} 字</text>
+            <view class="mt-1 flex items-center gap-1.5 text-11px text-muted">
+              <text>{{ formatTime(n.updatedAt) }} · {{ n.size }} 字</text>
+              <text v-if="activeFolder === 'all' && n.folderId" class="ot-notes__folder-tag">{{ folderName(n.folderId) }}</text>
+            </view>
           </view>
         </view>
       </view>
@@ -765,6 +1034,20 @@ const showList = computed(() => wide.value || !current.value)
           <view v-if="saveError" class="ot-notes__link text-12px" @click="save()">
             重试
           </view>
+          <view
+            class="ot-notes__icon-btn" :class="{ 'is-on': showOutline && (wide || fullscreen) }" title="大纲"
+            @click="toggleOutline"
+          >
+            <view class="i-carbon-list-dropdown" />
+          </view>
+          <!-- #ifdef H5 -->
+          <view
+            v-if="mode === 'split'" class="ot-notes__icon-btn" :class="{ 'is-on': scrollSync }"
+            :title="scrollSync ? '滚动同步：开（点击关闭）' : '滚动同步：关（点击开启）'" @click="scrollSync = !scrollSync"
+          >
+            <view :class="scrollSync ? 'i-carbon-link' : 'i-carbon-unlink'" />
+          </view>
+          <!-- #endif -->
           <view
             class="ot-notes__icon-btn" :title="fullscreen ? '退出全屏（Esc）' : '全屏编辑'"
             @click="toggleFullscreen()"
@@ -787,6 +1070,9 @@ const showList = computed(() => wide.value || !current.value)
         </view>
 
         <view class="ot-notes__body" :class="`is-${mode}`">
+          <scroll-view v-if="showOutline && (wide || fullscreen)" scroll-y class="ot-notes__outline">
+            <note-outline :items="outline" :active="activeHeading" @jump="jumpTo" />
+          </scroll-view>
           <view v-if="mode !== 'preview'" class="ot-notes__editor">
             <!-- #ifdef H5 -->
             <h5-textarea
@@ -815,12 +1101,23 @@ const showList = computed(() => wide.value || !current.value)
             />
             <!-- #endif -->
           </view>
+          <!-- #ifdef H5 -->
+          <!-- H5 用普通容器，便于滚动同步直接读写滚动位置 -->
+          <view v-if="mode !== 'edit'" class="ot-notes__preview is-native">
+            <md-view v-if="previewSource.trim()" :source="previewSource" />
+            <view v-else class="py-10 text-center text-13px text-muted">
+              预览区：在左侧输入 Markdown
+            </view>
+          </view>
+          <!-- #endif -->
+          <!-- #ifndef H5 -->
           <scroll-view v-if="mode !== 'edit'" scroll-y class="ot-notes__preview">
             <md-view v-if="previewSource.trim()" :source="previewSource" />
             <view v-else class="py-10 text-center text-13px text-muted">
               预览区：在左侧输入 Markdown
             </view>
           </scroll-view>
+          <!-- #endif -->
         </view>
 
         <view v-show="!fullscreen" class="ot-notes__foot">
@@ -838,7 +1135,13 @@ const showList = computed(() => wide.value || !current.value)
             <!-- #endif -->
           </view>
           <view class="ot-notes__action" :class="{ 'is-shared': current.shareCode }" @click="openShare">
-            <view class="i-carbon-share" />{{ current.shareCode ? '已分享' : '分享' }}
+            <view :class="current.shareCode && current.shareLocked ? 'i-carbon-locked' : 'i-carbon-share'" />{{ current.shareCode ? '已分享' : '分享' }}
+          </view>
+          <view class="ot-notes__action" @click="moveOpen = true">
+            <view class="i-carbon-folder-move-to" />{{ folderName(current.folderId) || '移动' }}
+          </view>
+          <view v-if="current.id" class="ot-notes__action" @click="openHistory">
+            <view class="i-carbon-recently-viewed" />历史
           </view>
           <view v-if="current.id" class="ot-notes__action" @click="togglePin(current)">
             <view :class="current.pinned ? 'i-carbon-pin-filled' : 'i-carbon-pin'" />{{ current.pinned ? '取消置顶' : '置顶' }}
@@ -870,22 +1173,36 @@ const showList = computed(() => wide.value || !current.value)
           拿到链接的人无需登录即可只读查看，看到的始终是你的最新内容；取消分享后链接立即失效。
         </text>
         <view class="mt-4 flex items-center gap-3 text-13px text-sub">
-          <text class="shrink-0">有效期</text>
+          <text class="w-56px shrink-0">有效期</text>
           <ot-segmented v-model="shareTtl" :options="SHARE_TTLS" size="small" />
         </view>
+        <view class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-13px text-sub">
+          <text class="w-56px shrink-0">访问密码</text>
+          <wd-switch v-model="sharePwdOn" size="20px" />
+          <template v-if="sharePwdOn">
+            <view class="ot-notes__pwd">
+              <input v-model="sharePwdInput" class="ot-mono min-w-0 flex-1 text-14px" placeholder="设置密码" :maxlength="32">
+            </view>
+            <text class="ot-notes__link text-12px" @click="randomSharePassword">随机</text>
+          </template>
+          <text v-else class="text-12px text-muted">不设密码，拿到链接即可查看</text>
+        </view>
+        <text v-if="shareDirty" class="mt-2 block text-12px text-amber-600">
+          修改后点「保存设置」生效
+        </text>
         <template v-if="current.shareCode">
-          <view class="ot-notes__share-link ot-mono" @click="copyText(shareLink(current.shareCode))">
+          <view class="ot-notes__share-link ot-mono" @click="copyText(shareText())">
             {{ shareLink(current.shareCode) || '（无法生成链接）' }}
           </view>
           <text class="mt-1.5 block text-12px text-muted">
-            {{ current.shareExpiresAt ? `${dayjs(current.shareExpiresAt * 1000).format('YYYY-MM-DD HH:mm')} 失效` : '永久有效' }}
+            {{ current.shareExpiresAt ? `${dayjs(current.shareExpiresAt * 1000).format('YYYY-MM-DD HH:mm')} 失效` : '永久有效' }}{{ current.sharePassword ? ` · 访问密码 ${current.sharePassword}` : ' · 无密码' }}
           </text>
           <view class="mt-4 flex flex-wrap gap-2">
-            <wd-button size="small" icon="copy" @click="copyText(shareLink(current.shareCode))">
-              复制链接
+            <wd-button size="small" icon="copy" @click="copyText(shareText())">
+              {{ current.sharePassword ? '复制链接和密码' : '复制链接' }}
             </wd-button>
             <wd-button size="small" type="info" plain :loading="sharing" @click="doShare(false)">
-              更新有效期
+              保存设置
             </wd-button>
             <wd-button size="small" type="info" plain @click="shareQrOpen = !shareQrOpen">
               {{ shareQrOpen ? '收起二维码' : '二维码' }}
@@ -907,6 +1224,43 @@ const showList = computed(() => wide.value || !current.value)
         </wd-button>
       </view>
     </wd-popup>
+
+    <!-- 移动到文件夹 -->
+    <wd-popup v-model="moveOpen" position="center" custom-style="border-radius: 16px; width: min(92vw, 360px);">
+      <view v-if="current" class="ot-notes__move">
+        <view class="mb-2 flex items-center gap-2">
+          <view class="i-carbon-folder-move-to text-18px text-[var(--wot-color-theme)]" />
+          <text class="flex-1 text-16px text-main font-600">移动到</text>
+          <view class="i-carbon-close cursor-pointer text-18px text-muted" @click="moveOpen = false" />
+        </view>
+        <view class="ot-notes__move-item" :class="{ 'is-active': !current.folderId }" @click="moveTo(null)">
+          <view class="i-carbon-document" />未分类
+        </view>
+        <view
+          v-for="fd in folders" :key="fd.id" class="ot-notes__move-item"
+          :class="{ 'is-active': current.folderId === fd.id }" @click="moveTo(fd.id)"
+        >
+          <view class="i-carbon-folder" />{{ fd.name }}
+        </view>
+        <text v-if="!folders.length" class="mt-2 block text-12px text-muted">还没有文件夹，可以在便签列表上方的 <text class="i-carbon-folder-add" /> 中新建</text>
+      </view>
+    </wd-popup>
+
+    <!-- 窄屏的大纲 -->
+    <wd-popup v-model="outlinePopup" position="bottom" custom-style="border-radius: 16px 16px 0 0; max-height: 70vh;">
+      <view class="ot-notes__outline-popup">
+        <view class="mb-2 flex items-center gap-2">
+          <view class="i-carbon-list-dropdown text-18px text-[var(--wot-color-theme)]" />
+          <text class="flex-1 text-16px text-main font-600">大纲</text>
+          <view class="i-carbon-close cursor-pointer text-18px text-muted" @click="outlinePopup = false" />
+        </view>
+        <scroll-view scroll-y style="max-height: 56vh">
+          <note-outline :items="outline" :active="activeHeading" @jump="jumpTo" />
+        </scroll-view>
+      </view>
+    </wd-popup>
+
+    <note-history v-model="historyOpen" :note-id="current?.id" :current-content="current?.content ?? ''" :wide="wide" @restored="onRestored" />
   </ot-tool-layout>
 </template>
 
@@ -1034,6 +1388,71 @@ const showList = computed(() => wide.value || !current.value)
   color: var(--ot-text);
 }
 
+.ot-notes__outline {
+  box-sizing: border-box;
+  flex: 0 0 190px;
+  height: 60vh;
+  min-height: 320px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--ot-border);
+
+  .is-fullscreen & {
+    height: 100%;
+    min-height: 0;
+  }
+}
+
+.ot-notes__outline-popup {
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+}
+
+.ot-notes__folder-tag {
+  overflow: hidden;
+  max-width: 90px;
+  padding: 0 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--ot-fill);
+}
+
+.ot-notes__pwd {
+  display: flex;
+  align-items: center;
+  width: 130px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--ot-text);
+  background: var(--ot-fill);
+}
+
+.ot-notes__move {
+  padding: 18px;
+}
+
+.ot-notes__move-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--ot-text);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--ot-fill);
+  }
+
+  &.is-active {
+    color: var(--wot-color-theme);
+    background: rgba(79, 110, 247, 0.08);
+    font-weight: 600;
+  }
+}
+
 .ot-notes__icon-btn {
   display: flex;
   flex-shrink: 0;
@@ -1049,6 +1468,10 @@ const showList = computed(() => wide.value || !current.value)
   &:hover {
     color: var(--wot-color-theme);
     background: var(--ot-fill);
+  }
+
+  &.is-on {
+    color: var(--wot-color-theme);
   }
 }
 
@@ -1172,6 +1595,11 @@ const showList = computed(() => wide.value || !current.value)
 
 .ot-notes__preview {
   box-sizing: border-box;
+
+  &.is-native {
+    overflow-y: auto;
+  }
+
   flex: 1;
   min-width: 0;
   height: 60vh;

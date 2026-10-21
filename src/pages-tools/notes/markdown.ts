@@ -190,6 +190,16 @@ md.core.ruler.after('inline', 'ot-task-list', (state) => {
   }
 })
 
+// 顶层块级元素带上源码行号（data-line），用于分栏滚动同步与大纲跳转
+md.core.ruler.push('ot-source-line', (state) => {
+  for (const t of state.tokens) {
+    if (t.level === 0 && t.nesting === 1 && t.map)
+      t.attrSet('data-line', String(t.map[0]))
+    else if (t.level === 0 && t.type === 'hr' && t.map)
+      t.attrSet('data-line', String(t.map[0]))
+  }
+})
+
 export interface HtmlSegment {
   type: 'html'
   html: string
@@ -203,6 +213,8 @@ export interface CodeSegment {
   /** 带内联样式的 <pre> */
   html: string
   lineCount: number
+  /** 代码块在源码中的起始行（从 0 开始） */
+  line: number
 }
 
 export type Segment = HtmlSegment | CodeSegment
@@ -269,6 +281,7 @@ export function renderMarkdown(source: string, inline = false): Segment[] {
         code,
         html: `<pre style="${PRE_STYLE}">${highlight(code, lang)}</pre>`,
         lineCount: code.split('\n').length,
+        line: t.map?.[0] ?? 0,
       })
     }
     else {
@@ -284,4 +297,30 @@ export function countText(source: string) {
   const cjk = source.match(/\p{Script=Han}/gu)?.length ?? 0
   const words = source.replace(/\p{Script=Han}/gu, ' ').match(/[\w'-]+/g)?.length ?? 0
   return { words: cjk + words, chars: Array.from(source).length, lines: source ? source.split('\n').length : 0 }
+}
+
+export interface OutlineItem {
+  level: number
+  text: string
+  /** 源码行号（从 0 开始） */
+  line: number
+}
+
+/** 大纲：所有标题（代码块里的 # 不算），标题里的 Markdown 标记只保留文字 */
+export function extractOutline(source: string): OutlineItem[] {
+  const tokens = md.parse(source, {})
+  const items: OutlineItem[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]
+    if (t.type !== 'heading_open' || !t.map)
+      continue
+    const inline = tokens[i + 1]
+    const text = (inline?.children ?? [])
+      .filter(c => c.type === 'text' || c.type === 'code_inline')
+      .map(c => c.content)
+      .join('')
+      .trim()
+    items.push({ level: Number(t.tag.slice(1)), text: text || '（空标题）', line: t.map[0] })
+  }
+  return items
 }

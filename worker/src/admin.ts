@@ -123,12 +123,14 @@ export async function deleteUser(req: Request, env: Env, params: Record<string, 
     env.DB.prepare('DELETE FROM vault_items WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM short_links WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM pastes WHERE user_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM note_versions WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM notes WHERE user_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM note_folders WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM rate_limits WHERE key = ?').bind(`paste:user:${id}`),
     env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id),
   ])
-  if (!results[6].meta.changes)
+  if (!results[results.length - 1].meta.changes)
     throw new ApiError(404, '用户不存在')
   return null
 }

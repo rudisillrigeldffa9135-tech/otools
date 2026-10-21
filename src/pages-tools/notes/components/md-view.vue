@@ -29,7 +29,7 @@ function lineNumbers(n: number) {
         <rich-text class="ot-md__html" :nodes="s.html" user-select />
         <!-- #endif -->
       </template>
-      <view v-else class="ot-md__code">
+      <view v-else class="ot-md__code" :data-line="s.line">
         <view class="ot-md__code-head">
           <text>{{ s.label }}</text>
           <view class="ot-md__copy" @click="copyText(s.code)">
