@@ -97,3 +97,43 @@ page {
     border-color: var(--wot-color-theme);
   }
 }
+
+/* #ifdef H5 */
+/*
+ * 浮层叠放顺序（仅 H5；小程序里这些都是原生控件，不受影响）
+ * 1. uni 自带的确认框、提示、操作菜单、选择器默认 z-index 为 999，比站内弹窗（1000~1100）低，
+ *    在弹窗里调用时会被挡在后面，这里统一提到所有自定义浮层之上
+ * 2. wd-popup 居中弹窗原来用 transform 居中；transform 会让里面 position: fixed 的元素
+ *    （uni 的时间 / 日期 / 下拉选择器就渲染在 <picker> 内部）改为相对弹窗定位并被裁掉，表现为点了没反应。
+ *    改为四边为 0 + margin: auto 居中，弹窗本身不再带 transform
+ */
+uni-modal,
+uni-modal .uni-mask,
+.uni-modal,
+uni-toast,
+.uni-toast,
+.uni-sample-toast,
+uni-toast .uni-mask,
+.uni-actionsheet,
+.uni-actionsheet__mask,
+.uni-picker-container,
+.uni-picker-container .uni-mask,
+.uni-picker-container .uni-picker-custom {
+  z-index: 5000 !important;
+}
+
+html .wd-popup.wd-popup--center {
+  inset: 0 !important;
+  width: fit-content;
+  height: -webkit-fit-content;
+  height: fit-content;
+  margin: auto;
+  transform: none !important;
+  transform-origin: 50% 50%;
+
+  &.wd-zoom-in-enter,
+  &.wd-zoom-in-leave-to {
+    transform: scale(0.8) !important;
+  }
+}
+/* #endif */
