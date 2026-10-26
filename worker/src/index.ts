@@ -10,11 +10,13 @@ import type { Env } from './lib'
 import * as admin from './admin'
 import * as anniversary from './anniversary'
 import * as auth from './auth'
+import * as calendar from './calendar'
 import * as dns from './dns'
 import * as files from './files'
 import { ApiError, fail, now, ok } from './lib'
 import * as network from './network'
 import * as notes from './notes'
+import * as notify from './notify'
 import * as paste from './paste'
 import * as rates from './rates'
 import * as shortlink from './shortlink'
@@ -108,6 +110,20 @@ route('POST', '/api/anniversaries', anniversary.createAnniversary)
 route('PUT', '/api/anniversaries/:id', anniversary.updateAnniversary)
 route('DELETE', '/api/anniversaries/:id', anniversary.deleteAnniversary)
 
+route('GET', '/api/today', notify.today)
+route('GET', '/api/notifications', notify.listNotifications)
+route('GET', '/api/notifications/unread', notify.unreadCount)
+route('POST', '/api/notifications/read', notify.readNotifications)
+route('DELETE', '/api/notifications', notify.clearNotifications)
+route('GET', '/api/push/key', notify.pushKey)
+route('POST', '/api/push/subscribe', notify.subscribePush)
+route('POST', '/api/push/unsubscribe', notify.unsubscribePush)
+route('POST', '/api/push/test', notify.testPush)
+route('GET', '/api/calendar', calendar.getCalendar)
+route('POST', '/api/calendar', calendar.resetCalendar)
+route('DELETE', '/api/calendar', calendar.disableCalendar)
+route('GET', '/api/cal/:token', calendar.serveCalendar)
+
 route('GET', '/api/ip', network.myIp)
 route('GET', '/api/dns', dns.lookup)
 
@@ -150,12 +166,14 @@ async function handleApi(req: Request, env: Env, pathname: string) {
   return pathMatched ? fail(405, '请求方法不支持') : fail(404, '接口不存在')
 }
 
-/** 定时清理：过期文件（含 R2 对象）、快传、便签历史版本、限流计数、缓存与会话 */
+/** 定时任务：派发到点的提醒；清理过期文件（含 R2 对象）、快传、便签历史版本、通知、限流计数、缓存与会话 */
 async function cleanup(env: Env) {
   const t = now()
   const removedFiles = await files.cleanupExpiredFiles(env)
   await notes.cleanupNoteVersions(env)
   await todo.cleanupTodos(env)
+  const reminded = await notify.dispatchReminders(env)
+  await notify.cleanupNotifications(env)
   await env.DB.batch([
     env.DB.prepare('DELETE FROM pastes WHERE expires_at > 0 AND expires_at <= ?').bind(t),
     env.DB.prepare('DELETE FROM rate_limits WHERE reset_at <= ?').bind(t),
@@ -165,6 +183,8 @@ async function cleanup(env: Env) {
   ])
   if (removedFiles)
     console.log(`定时清理：删除过期文件 ${removedFiles} 个`)
+  if (reminded)
+    console.log(`提醒：发出 ${reminded} 条`)
 }
 
 export default {

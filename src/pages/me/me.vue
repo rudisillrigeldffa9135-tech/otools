@@ -24,9 +24,12 @@ const userStore = useUserStore()
 const user = computed(() => userStore.userInfo)
 const isAdmin = computed(() => user.value.role === 'admin')
 
+const remindSettings = ref<{ refresh: () => void }>()
+
 onShow(() => {
   // 同步最新的角色 / 昵称（可能被管理员修改过）
   userStore.fetchUserInfo().catch(() => {})
+  remindSettings.value?.refresh()
 })
 
 function goAdmin() {
@@ -158,6 +161,8 @@ const version = '1.0.0'
       </view>
     </ot-panel>
     <!-- #endif -->
+
+    <ot-remind-settings ref="remindSettings" />
 
     <ot-panel title="外观">
       <ot-segmented v-model="themeMode" :options="themeOptions" />

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // 仅 H5 使用：替代 uni 自带导航栏，宽屏时显示横向导航（底部 tabbar 会隐藏）
+import { getUnreadCount } from '@/api/notify'
+import { isLoggedIn } from '@/router/auth'
 import { useAppStore } from '@/store/app'
 import { customTabbarList } from '@/tabbar/config'
 import { getToolByPath } from '@/tools/registry'
@@ -9,9 +11,23 @@ const appStore = useAppStore()
 const navs = customTabbarList.map(item => ({ text: item.text, icon: item.icon, path: `/${item.pagePath}` }))
 
 const path = ref('')
+/** 未读提醒数；每次切换页面时刷新，30 秒内不重复请求 */
+const unread = ref(0)
+const loggedIn = ref(false)
+let lastFetch = 0
 onShow(() => {
   path.value = currRoute().path
+  loggedIn.value = isLoggedIn()
+  if (loggedIn.value && (Date.now() - lastFetch > 30_000 || path.value === '/pages/notify/index')) {
+    lastFetch = Date.now()
+    getUnreadCount().then(r => (unread.value = r.unread)).catch(() => {})
+  }
 })
+
+function goNotify() {
+  lastFetch = 0
+  uni.navigateTo({ url: '/pages/notify/index' })
+}
 
 const isTabPage = computed(() => path.value === '/' || navs.some(n => n.path === path.value))
 const tool = computed(() => getToolByPath(path.value))
@@ -66,6 +82,10 @@ function goBack() {
         </view>
       </view>
 
+      <view v-if="loggedIn && path !== '/pages/notify/index'" class="ot-header__icon-btn relative" title="提醒" @click="goNotify">
+        <view class="i-carbon-notification text-18px" />
+        <text v-if="unread" class="ot-header__badge">{{ unread > 99 ? '99+' : unread }}</text>
+      </view>
       <view class="ot-header__icon-btn" @click="appStore.toggleDark()">
         <view :class="appStore.isDark ? 'i-carbon-sun' : 'i-carbon-moon'" class="text-18px" />
       </view>
@@ -81,6 +101,20 @@ function goBack() {
   background: color-mix(in srgb, var(--ot-bg) 82%, transparent);
   backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--ot-border);
+}
+
+.ot-header__badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  color: #fff;
+  background: #ef4444;
 }
 
 .ot-header__brand {

@@ -326,8 +326,8 @@ export async function createTodo(req: Request, env: Env) {
   const tz = parseTz(body.tzOffset)
   const t = now()
   const row = await env.DB.prepare(
-    `INSERT INTO todos (list_id, user_id, key_owner_id, data, due_date, due_time, priority, repeat, repeat_anchor, remind, remind_at, tz_offset, sort, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    `INSERT INTO todos (list_id, user_id, key_owner_id, data, due_date, due_time, priority, repeat, repeat_anchor, remind, remind_at, reminded, tz_offset, sort, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
   ).bind(
     listId,
     user.id,
@@ -340,6 +340,8 @@ export async function createTodo(req: Request, env: Env) {
     repeat ? dueDate : null,
     remind,
     remindAt(dueDate, dueTime, remind, tz),
+    // 提醒时间已经过去的不再提醒
+    remindAt(dueDate, dueTime, remind, tz) <= t ? 1 : 0,
     tz,
     // 新建的排在最前面
     typeof body.sort === 'number' ? body.sort : -Date.now() / 1000,
@@ -387,7 +389,7 @@ export async function updateTodo(req: Request, env: Env, params: Record<string, 
 
   const updated = await env.DB.prepare(
     `UPDATE todos SET list_id = ?, key_owner_id = ?, data = ?, due_date = ?, due_time = ?, priority = ?, repeat = ?, repeat_anchor = ?,
-       remind = ?, remind_at = ?, reminded = CASE WHEN remind_at = ? THEN reminded ELSE 0 END, tz_offset = ?, sort = ?, updated_at = ?
+       remind = ?, remind_at = ?, reminded = CASE WHEN remind_at = ? THEN reminded WHEN ? <= ? THEN 1 ELSE 0 END, tz_offset = ?, sort = ?, updated_at = ?
      WHERE id = ? RETURNING *`,
   ).bind(
     listId,
@@ -401,6 +403,8 @@ export async function updateTodo(req: Request, env: Env, params: Record<string, 
     remind,
     newRemindAt,
     newRemindAt,
+    newRemindAt,
+    now(),
     tz,
     typeof body.sort === 'number' && Number.isFinite(body.sort) ? body.sort : row.sort,
     now(),
@@ -452,8 +456,8 @@ export async function completeTodo(req: Request, env: Env, params: Record<string
       const secret = await dec<TodoSecret>(env, row.key_owner_id, row.data)
       secret.subtasks = (secret.subtasks ?? []).map(s => ({ ...s, done: false }))
       nextRow = await env.DB.prepare(
-        `INSERT INTO todos (list_id, user_id, key_owner_id, data, due_date, due_time, priority, repeat, repeat_anchor, remind, remind_at, tz_offset, sort, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+        `INSERT INTO todos (list_id, user_id, key_owner_id, data, due_date, due_time, priority, repeat, repeat_anchor, remind, remind_at, reminded, tz_offset, sort, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       ).bind(
         row.list_id,
         row.user_id,
@@ -466,6 +470,7 @@ export async function completeTodo(req: Request, env: Env, params: Record<string
         row.repeat_anchor || row.due_date,
         row.remind,
         remindAt(nextDate, row.due_time, row.remind, tz),
+        remindAt(nextDate, row.due_time, row.remind, tz) <= t ? 1 : 0,
         tz,
         row.sort,
         t,

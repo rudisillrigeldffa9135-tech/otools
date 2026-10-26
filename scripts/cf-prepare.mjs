@@ -6,9 +6,11 @@
 // 3. VAULT_KEY：仅当 Worker 上还没有这个 secret 时（首次部署），把环境变量 VAULT_KEY
 //    写成 secrets 文件交给 `wrangler deploy --secrets-file`。已存在时绝不覆盖——
 //    更换 VAULT_KEY 会导致已保存的密码全部无法解密。
+// 4. VAPID_PRIVATE_KEY / VAPID_PUBLIC_KEY（浏览器推送）：没有时自动生成，同样随部署上传，之后不再变化
 //
 // 需要环境变量：CLOUDFLARE_API_TOKEN、CLOUDFLARE_ACCOUNT_ID；首次部署还需要 VAULT_KEY
 import { execFileSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { Buffer } from 'node:buffer'
@@ -137,24 +139,44 @@ function ensureR2() {
   }
 }
 
-function hasVaultKey() {
+/** Worker 上已有的 secret 名称 */
+function existingSecrets() {
   try {
     const secrets = JSON.parse(wrangler(['secret', 'list', '--format', 'json']))
-    return secrets.some(s => s.name === 'VAULT_KEY')
+    return new Set(secrets.map(s => s.name))
   }
   catch (e) {
     const output = `${e.stdout || ''}${e.stderr || ''}`
     // 首次部署时 Worker 还不存在，视为没有 secret；其他错误（如权限不足）直接失败，
     // 避免误判为「没有」而用新的 VAULT_KEY 覆盖掉旧的
     if (/10007|does not exist|not found/i.test(output))
-      return false
+      return new Set()
     fail(`读取 Worker secrets 失败：${output.trim() || e.message}`)
   }
 }
 
+/** 浏览器推送用的 VAPID 密钥对：私钥为 JWK（JSON），公钥为未压缩点的 base64url */
+function generateVapidKeys() {
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const jwk = privateKey.export({ format: 'jwk' })
+  const pub = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')])
+  return { VAPID_PRIVATE_KEY: JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d }), VAPID_PUBLIC_KEY: pub.toString('base64url') }
+}
+
 function prepareSecrets() {
-  if (hasVaultKey()) {
+  const existing = existingSecrets()
+  const secrets = {}
+  // VAPID：没有就自动生成（之后保持不变，否则已订阅的浏览器会收不到推送）
+  if (!existing.has('VAPID_PRIVATE_KEY') || !existing.has('VAPID_PUBLIC_KEY')) {
+    Object.assign(secrets, generateVapidKeys())
+    console.log('VAPID：首次部署，已生成浏览器推送密钥')
+  }
+  else {
+    console.log('VAPID：Worker 上已存在，保持不变')
+  }
+  if (existing.has('VAULT_KEY')) {
     console.log('VAULT_KEY：Worker 上已存在，保持不变')
+    writeSecrets(secrets)
     return
   }
   const key = process.env.VAULT_KEY?.trim()
@@ -168,9 +190,17 @@ function prepareSecrets() {
   if (bytes < 32)
     fail('VAULT_KEY 格式不正确：需要 base64 编码的 32 字节随机数')
 
-  fs.writeFileSync(SECRETS_FILE, JSON.stringify({ VAULT_KEY: key }), { mode: 0o600 })
-  setOutput('secrets_file', SECRETS_FILE)
+  secrets.VAULT_KEY = key
+  writeSecrets(secrets)
   console.log('VAULT_KEY：首次部署，将随本次部署一起设置')
+}
+
+/** 需要设置的 secret 写成文件，随 wrangler deploy --secrets-file 一起上传（只增不删） */
+function writeSecrets(secrets) {
+  if (!Object.keys(secrets).length)
+    return
+  fs.writeFileSync(SECRETS_FILE, JSON.stringify(secrets), { mode: 0o600 })
+  setOutput('secrets_file', SECRETS_FILE)
 }
 
 if (!process.env.CLOUDFLARE_API_TOKEN || !process.env.CLOUDFLARE_ACCOUNT_ID)

@@ -9,6 +9,9 @@ export interface Env {
   PBKDF2_ITERATIONS?: string
   /** 文件快传的存储桶（R2）；账户未开通 R2 时部署脚本会去掉这个绑定，相关接口返回 503 */
   FILES?: R2Bucket
+  /** 浏览器推送的 VAPID 密钥对（部署脚本自动生成）：私钥为 JWK JSON，公钥为 base64url */
+  VAPID_PRIVATE_KEY?: string
+  VAPID_PUBLIC_KEY?: string
 }
 
 export type Role = 'admin' | 'user'

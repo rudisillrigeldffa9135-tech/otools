@@ -13,6 +13,7 @@ import {
 } from '@/api/login'
 import { isDoubleTokenRes, isSingleTokenRes } from '@/api/types/login'
 import { isDoubleTokenMode } from '@/utils'
+import { disablePush, syncPushSubscription } from '@/utils/push'
 import { clearUserLocalData } from '@/utils/user-storage'
 import { useUserStore } from './user'
 
@@ -108,6 +109,10 @@ export const useTokenStore = defineStore(
       setTokenInfo(tokenInfo)
       const userStore = useUserStore()
       await userStore.fetchUserInfo()
+      // #ifdef H5
+      // 本浏览器之前开启过推送：登记到当前账号
+      syncPushSubscription()
+      // #endif
     }
 
     /**
@@ -176,7 +181,10 @@ export const useTokenStore = defineStore(
      */
     const logout = async () => {
       try {
-        // TODO 实现自己的退出登录逻辑
+        // #ifdef H5
+        // 取消本浏览器的推送订阅，避免下一个登录的人收到上一个人的提醒（要在清除登录信息之前）
+        await disablePush().catch(() => {})
+        // #endif
         await _logout()
       }
       catch (error) {

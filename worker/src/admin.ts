@@ -5,6 +5,7 @@ import { ApiError, isUniqueViolation, now, password, pbkdf2Iterations, readJson,
 import { deleteUserFiles } from './files'
 import { deleteUserTodos } from './todo'
 import { deleteUserAnniversaries } from './anniversary'
+import { deleteUserNotifications } from './notify'
 
 interface UserRow {
   id: number
@@ -123,6 +124,7 @@ export async function deleteUser(req: Request, env: Env, params: Record<string, 
   await deleteUserFiles(env, id)
   await deleteUserTodos(env, id)
   await deleteUserAnniversaries(env, id)
+  await deleteUserNotifications(env, id)
   const results = await env.DB.batch([
     env.DB.prepare('DELETE FROM vault_items WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM short_links WHERE user_id = ?').bind(id),

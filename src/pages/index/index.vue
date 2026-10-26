@@ -30,6 +30,10 @@ const filteredTools = computed(() =>
   activeCategory.value === 'all' ? tools : tools.filter(t => t.category === activeCategory.value),
 )
 
+/** 「今日」卡片：每次回到首页时刷新 */
+const todayCard = ref<{ refresh: () => void }>()
+onShow(() => todayCard.value?.refresh())
+
 function onSearchConfirm() {
   // 回车时只有一个结果则直接打开
   if (searchResult.value.length === 1)
@@ -76,6 +80,8 @@ function onSearchConfirm() {
     </template>
 
     <template v-else>
+      <ot-today ref="todayCard" />
+
       <!-- 最近使用 -->
       <template v-if="toolStore.recents.length">
         <view class="ot-section-title">

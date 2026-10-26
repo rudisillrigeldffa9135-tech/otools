@@ -65,6 +65,37 @@ self.addEventListener('activate', (event) => {
   )
 })
 
+// 浏览器推送：显示系统通知；点击后打开（或切换到）对应页面
+self.addEventListener('push', (event) => {
+  let data = {}
+  try {
+    data = event.data ? event.data.json() : {}
+  }
+  catch {}
+  const title = data.title || 'OTools 提醒'
+  event.waitUntil(self.registration.showNotification(title, {
+    body: data.body || '',
+    tag: data.tag,
+    renotify: !!data.tag,
+    icon: BASE + 'static/pwa/icon-192.png',
+    badge: BASE + 'static/pwa/icon-192.png',
+    data: { url: data.url || BASE },
+  }))
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = (event.notification.data && event.notification.data.url) || BASE
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      const win = list.find(c => new URL(c.url).origin === self.location.origin)
+      if (win)
+        return win.focus().then(() => win.navigate ? win.navigate(url) : undefined)
+      return self.clients.openWindow(url)
+    }),
+  )
+})
+
 self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET')
