@@ -10,6 +10,6 @@
     "isolatedModules": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "../src/pages-tools/datecalc/lunar-javascript.d.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

@@ -3,6 +3,7 @@ import { insertUser, requireAdmin } from './auth'
 import { hashPassword } from './crypto'
 import { ApiError, isUniqueViolation, now, password, pbkdf2Iterations, readJson, role, str, username } from './lib'
 import { deleteUserFiles } from './files'
+import { deleteUserTodos } from './todo'
 
 interface UserRow {
   id: number
@@ -119,6 +120,7 @@ export async function deleteUser(req: Request, env: Env, params: Record<string, 
     throw new ApiError(400, '不能删除自己')
   // 先删 R2 里的文件，再删数据库记录
   await deleteUserFiles(env, id)
+  await deleteUserTodos(env, id)
   const results = await env.DB.batch([
     env.DB.prepare('DELETE FROM vault_items WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM short_links WHERE user_id = ?').bind(id),

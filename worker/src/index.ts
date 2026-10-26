@@ -17,6 +17,7 @@ import * as notes from './notes'
 import * as paste from './paste'
 import * as rates from './rates'
 import * as shortlink from './shortlink'
+import * as todo from './todo'
 import * as vault from './vault'
 import * as whois from './whois'
 
@@ -85,6 +86,22 @@ route('POST', '/api/note-folders', notes.createFolder)
 route('PUT', '/api/note-folders/:id', notes.renameFolder)
 route('DELETE', '/api/note-folders/:id', notes.deleteFolder)
 
+// 待办：固定路径要排在 /:id 之前
+route('GET', '/api/todos', todo.overview)
+route('POST', '/api/todos', todo.createTodo)
+route('POST', '/api/todos/reorder', todo.reorderTodos)
+route('DELETE', '/api/todos/done', todo.clearDone)
+route('GET', '/api/todos/stats', todo.stats)
+route('PUT', '/api/todos/:id', todo.updateTodo)
+route('DELETE', '/api/todos/:id', todo.deleteTodo)
+route('POST', '/api/todos/:id/complete', todo.completeTodo)
+route('POST', '/api/todo-focus', todo.addFocus)
+route('POST', '/api/todo-lists', todo.createList)
+route('PUT', '/api/todo-lists/:id', todo.updateList)
+route('DELETE', '/api/todo-lists/:id', todo.deleteList)
+route('POST', '/api/todo-lists/:id/members', todo.addMember)
+route('DELETE', '/api/todo-lists/:id/members/:userId', todo.removeMember)
+
 route('GET', '/api/ip', network.myIp)
 route('GET', '/api/dns', dns.lookup)
 
@@ -132,6 +149,7 @@ async function cleanup(env: Env) {
   const t = now()
   const removedFiles = await files.cleanupExpiredFiles(env)
   await notes.cleanupNoteVersions(env)
+  await todo.cleanupTodos(env)
   await env.DB.batch([
     env.DB.prepare('DELETE FROM pastes WHERE expires_at > 0 AND expires_at <= ?').bind(t),
     env.DB.prepare('DELETE FROM rate_limits WHERE reset_at <= ?').bind(t),
