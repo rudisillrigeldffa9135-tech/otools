@@ -28,3 +28,28 @@ export function derivePreview(content: string) {
   const text = body.slice(first + 1).join('\n').replace(/```[\s\S]*?(?:```|$)/g, '\n[代码]\n').replace(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]*|[-*+][ \t]+(?:\[[ x]\][ \t]+)?|\d+[.)][ \t]+)/gim, '').replace(/^[ \t]*(?:\|[ \t]*)?:?-{3}.*$/gm, '').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*`~|]+/g, ' ').replace(/\s+/g, ' ').trim()
   return text.length > PREVIEW_LENGTH ? `${text.slice(0, PREVIEW_LENGTH)}…` : text
 }
+
+/**
+ * 便签里未完成的任务（「- [ ] xxx」「* [ ] xxx」「1. [ ] xxx」），代码块里的不算；用于「转为待办」
+ */
+export function extractTasks(content: string, max = 50) {
+  const tasks: string[] = []
+  let inFence = false
+  for (const line of content.split('\n')) {
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence)
+      continue
+    const m = line.match(/^\s*(?:[-*+]|\d+[.)])\s+\[ \]\s+(\S.*)$/)
+    if (m) {
+      const text = m[1].trim().slice(0, 500)
+      if (text && !tasks.includes(text))
+        tasks.push(text)
+      if (tasks.length >= max)
+        break
+    }
+  }
+  return tasks
+}

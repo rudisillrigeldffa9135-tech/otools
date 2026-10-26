@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { IPerson, ITodo, ITodoForm, ITodoList } from '@/api/todo'
-import type { SortMode, ViewKey } from './views'
+import type { Quadrant, SortMode, ViewKey } from './views'
 import { clearDoneTodos, completeTodo, createTodo, deleteTodo, getTodos, reorderTodos, updateTodo } from '@/api/todo'
 import { toast } from '@/utils/common'
 import { userKey } from '@/utils/user-storage'
@@ -8,10 +8,14 @@ import { today as localToday } from '../datecalc/date'
 import { colorHex } from './colors'
 import ListSettings from './components/list-settings.vue'
 import TodoDetail from './components/todo-detail.vue'
+import TodoCalendar from './components/todo-calendar.vue'
+import TodoFocus from './components/todo-focus.vue'
 import TodoItem from './components/todo-item.vue'
+import TodoMatrix from './components/todo-matrix.vue'
+import TodoStats from './components/todo-stats.vue'
 import { parseQuickAdd } from './quick-parse'
 import { describeRule } from './repeat'
-import { allTags, dueLabel, groupTodos, matchesView, viewCounts } from './views'
+import { allTags, dueLabel, groupTodos, matchesView, quadrantDefaults, viewCounts } from './views'
 
 definePage({
   style: { navigationBarTitleText: '待办事项' },
@@ -92,6 +96,16 @@ const sortMode = ref<SortMode>(readPref<SortMode>('ot-todo-sort', 'smart'))
 watch(view, v => writePref('ot-todo-view', v))
 watch(sortMode, v => writePref('ot-todo-sort', v))
 
+/** 列表以外的面板：日历、四象限、统计 */
+type Panel = 'list' | 'calendar' | 'matrix' | 'stats'
+const panel = ref<Panel>(readPref<Panel>('ot-todo-panel', 'list'))
+watch(panel, v => writePref('ot-todo-panel', v))
+const TOOL_VIEWS: { key: Panel, label: string, icon: string }[] = [
+  { key: 'calendar', label: '日历', icon: 'i-carbon-calendar-heat-map' },
+  { key: 'matrix', label: '四象限', icon: 'i-carbon-grid' },
+  { key: 'stats', label: '统计', icon: 'i-carbon-chart-column' },
+]
+
 const SMART_VIEWS: { key: ViewKey, label: string, icon: string }[] = [
   { key: 'today', label: '今天', icon: 'i-carbon-sun' },
   { key: 'week', label: '未来 7 天', icon: 'i-carbon-calendar' },
@@ -111,6 +125,8 @@ const tags = computed(() => allTags(todos.value.filter(t => !t.done)))
 const currentList = computed(() => view.value.startsWith('list:') ? lists.value.find(l => l.id === Number(view.value.slice(5))) : undefined)
 
 const viewTitle = computed(() => {
+  if (panel.value !== 'list')
+    return TOOL_VIEWS.find(p => p.key === panel.value)?.label ?? ''
   const smart = SMART_VIEWS.find(v => v.key === view.value)
   if (smart)
     return smart.label
@@ -163,7 +179,14 @@ function itemCreator(t: ITodo) {
   return t.createdBy !== me.value ? personName(t.createdBy) : ''
 }
 
+function selectPanel(p: Panel) {
+  panel.value = p
+  if (!wide.value)
+    selectedId.value = null
+}
+
 function selectView(v: ViewKey) {
+  panel.value = 'list'
   view.value = v
   showDone.value = false
   if (!wide.value)
@@ -234,6 +257,29 @@ async function quickAdd() {
   finally {
     adding.value = false
   }
+}
+
+/** 日历、四象限里直接添加 */
+async function addWith(form: ITodoForm) {
+  try {
+    todos.value.push(await createTodo(form))
+  }
+  catch {}
+}
+function addOnDate(title: string, date: string) {
+  addWith({ title, dueDate: date, ...(currentList.value ? { listId: currentList.value.id } : {}) })
+}
+function addInQuadrant(title: string, q: Quadrant) {
+  addWith({ title, ...quadrantDefaults(q, today.value) })
+}
+
+/* ---------------- 番茄钟 ---------------- */
+
+const focusRef = ref<InstanceType<typeof TodoFocus>>()
+function startFocus(t?: ITodo | null) {
+  focusRef.value?.start(t ? { id: t.id, title: t.title } : null)
+  if (!wide.value)
+    selectedId.value = null
 }
 
 /* ---------------- 修改、完成、删除 ---------------- */
@@ -482,12 +528,22 @@ onUnload(() => clearInterval(poller))
       <!-- 侧栏：视图、清单、标签 -->
       <view v-if="wide" class="ot-todo__side">
         <view
-          v-for="v in SMART_VIEWS" :key="v.key" class="ot-todo__nav" :class="{ 'is-active': view === v.key }"
+          v-for="v in SMART_VIEWS" :key="v.key" class="ot-todo__nav" :class="{ 'is-active': panel === 'list' && view === v.key }"
           @click="selectView(v.key)"
         >
           <view :class="v.icon" class="text-16px" />
           <text class="min-w-0 flex-1">{{ v.label }}</text>
           <text v-if="counts[v.key]" class="ot-todo__count">{{ counts[v.key] }}</text>
+        </view>
+        <view class="ot-todo__side-title">
+          视图
+        </view>
+        <view
+          v-for="p in TOOL_VIEWS" :key="p.key" class="ot-todo__nav" :class="{ 'is-active': panel === p.key }"
+          @click="selectPanel(p.key)"
+        >
+          <view :class="p.icon" class="text-16px" />
+          <text class="min-w-0 flex-1">{{ p.label }}</text>
         </view>
 
         <view class="ot-todo__side-title">
@@ -495,7 +551,7 @@ onUnload(() => clearInterval(poller))
           <view class="i-carbon-add cursor-pointer text-16px" title="新建清单" @click="openListSettings(null)" />
         </view>
         <view
-          v-for="l in lists" :key="l.id" class="ot-todo__nav" :class="{ 'is-active': view === `list:${l.id}` }"
+          v-for="l in lists" :key="l.id" class="ot-todo__nav" :class="{ 'is-active': panel === 'list' && view === `list:${l.id}` }"
           @click="selectView(`list:${l.id}`)"
         >
           <view class="ot-todo__dot" :style="{ background: colorHex(l.color) }" />
@@ -513,7 +569,7 @@ onUnload(() => clearInterval(poller))
           </view>
           <view class="flex flex-wrap gap-1.5 px-1">
             <view
-              v-for="tag in tags" :key="tag" class="ot-todo__tag" :class="{ 'is-active': view === `tag:${tag}` }"
+              v-for="tag in tags" :key="tag" class="ot-todo__tag" :class="{ 'is-active': panel === 'list' && view === `tag:${tag}` }"
               @click="selectView(`tag:${tag}`)"
             >
               #{{ tag }}
@@ -526,13 +582,16 @@ onUnload(() => clearInterval(poller))
       <view class="ot-todo__main">
         <!-- 窄屏：视图切换 -->
         <ot-hscroll v-if="!wide" class="mb-3 whitespace-nowrap">
-          <view v-for="v in SMART_VIEWS" :key="v.key" class="ot-todo__chip" :class="{ 'is-active': view === v.key }" @click="selectView(v.key)">
+          <view v-for="v in SMART_VIEWS" :key="v.key" class="ot-todo__chip" :class="{ 'is-active': panel === 'list' && view === v.key }" @click="selectView(v.key)">
             {{ v.label }}<text v-if="counts[v.key]" class="ml-1 opacity-70">{{ counts[v.key] }}</text>
           </view>
-          <view v-for="l in lists" :key="l.id" class="ot-todo__chip" :class="{ 'is-active': view === `list:${l.id}` }" @click="selectView(`list:${l.id}`)">
+          <view v-for="p in TOOL_VIEWS" :key="p.key" class="ot-todo__chip" :class="{ 'is-active': panel === p.key }" @click="selectPanel(p.key)">
+            <view :class="p.icon" class="mr-1" />{{ p.label }}
+          </view>
+          <view v-for="l in lists" :key="l.id" class="ot-todo__chip" :class="{ 'is-active': panel === 'list' && view === `list:${l.id}` }" @click="selectView(`list:${l.id}`)">
             <view class="ot-todo__dot mr-1" :style="{ background: colorHex(l.color) }" />{{ l.name }}
           </view>
-          <view v-for="tag in tags" :key="tag" class="ot-todo__chip" :class="{ 'is-active': view === `tag:${tag}` }" @click="selectView(`tag:${tag}`)">
+          <view v-for="tag in tags" :key="tag" class="ot-todo__chip" :class="{ 'is-active': panel === 'list' && view === `tag:${tag}` }" @click="selectView(`tag:${tag}`)">
             #{{ tag }}
           </view>
           <view class="ot-todo__chip" @click="openListSettings(null)">
@@ -542,19 +601,26 @@ onUnload(() => clearInterval(poller))
 
         <view class="ot-todo__head">
           <text class="ot-todo__title">{{ viewTitle }}</text>
-          <view v-if="currentList" class="ot-todo__icon-btn" :title="currentList.isOwner ? '清单设置与共享' : '清单信息'" @click="openListSettings(currentList)">
+          <view v-if="panel === 'list' && currentList" class="ot-todo__icon-btn" :title="currentList.isOwner ? '清单设置与共享' : '清单信息'" @click="openListSettings(currentList)">
             <view :class="currentList.members.length || !currentList.isOwner ? 'i-carbon-user-multiple' : 'i-carbon-settings'" />
           </view>
           <view class="flex-1" />
-          <picker v-if="view !== 'done'" :range="SORT_OPTIONS" range-key="label" :value="SORT_OPTIONS.findIndex(s => s.value === sortMode)" @change="sortMode = SORT_OPTIONS[Number($event.detail.value)].value">
+          <view class="ot-todo__focus-btn" title="番茄钟" @click="startFocus(null)">
+            🍅 <text class="max-md:hidden">番茄钟</text>
+          </view>
+          <picker v-if="panel === 'list' && view !== 'done'" :range="SORT_OPTIONS" range-key="label" :value="SORT_OPTIONS.findIndex(s => s.value === sortMode)" @change="sortMode = SORT_OPTIONS[Number($event.detail.value)].value">
             <view class="ot-todo__sort">
               <view class="i-carbon-sort-ascending" />{{ SORT_OPTIONS.find(s => s.value === sortMode)?.label }}
             </view>
           </picker>
         </view>
 
+        <todo-calendar v-if="panel === 'calendar'" :todos="todos" :today="today" @open="selectedId = $event.id" @toggle="toggle" @add="addOnDate" />
+        <todo-matrix v-else-if="panel === 'matrix'" :todos="todos" :today="today" @open="selectedId = $event.id" @toggle="toggle" @add="addInQuadrant" />
+        <todo-stats v-else-if="panel === 'stats'" />
+
         <!-- 快速添加 -->
-        <view v-if="view !== 'done'" class="ot-todo__add">
+        <view v-if="panel === 'list' && view !== 'done'" class="ot-todo__add">
           <view class="ot-todo__add-row">
             <view class="i-carbon-add text-18px text-[var(--wot-color-theme)]" />
             <input
@@ -577,10 +643,10 @@ onUnload(() => clearInterval(poller))
         </view>
 
         <!-- 列表 -->
-        <view v-if="loading" class="py-12 text-center text-13px text-muted">
+        <view v-if="panel === 'list' && loading" class="py-12 text-center text-13px text-muted">
           加载中…
         </view>
-        <template v-else>
+        <template v-else-if="panel === 'list'">
           <view v-for="g in groups" :key="g.key" class="ot-todo__group">
             <view v-if="g.title" class="ot-todo__group-title" :class="{ 'is-danger': g.danger }">
               {{ g.title }} <text class="opacity-60">{{ g.items.length }}</text>
@@ -625,8 +691,8 @@ onUnload(() => clearInterval(poller))
       <!-- 宽屏：右侧详情 -->
       <view v-if="wide && selected" class="ot-todo__detail">
         <todo-detail
-          :todo="selected" :lists="lists" :today="today" :person-name="personName" :me="me"
-          @update="applyUpdate(selected.id, $event)" @toggle="toggle(selected)" @remove="remove(selected)" @close="selectedId = null"
+          :todo="selected" :lists="lists" :today="today" :person-name="personName" :me="me" can-focus
+          @update="applyUpdate(selected.id, $event)" @toggle="toggle(selected)" @remove="remove(selected)" @close="selectedId = null" @focus="startFocus(selected)"
         />
       </view>
     </view>
@@ -635,11 +701,13 @@ onUnload(() => clearInterval(poller))
     <wd-popup v-model="detailOpen" position="bottom" :z-index="1000" custom-style="border-radius: 16px 16px 0 0; max-height: 88vh;">
       <scroll-view v-if="selected" scroll-y class="ot-todo__sheet">
         <todo-detail
-          :todo="selected" :lists="lists" :today="today" :person-name="personName" :me="me"
-          @update="applyUpdate(selected.id, $event)" @toggle="toggle(selected)" @remove="remove(selected)" @close="selectedId = null"
+          :todo="selected" :lists="lists" :today="today" :person-name="personName" :me="me" can-focus
+          @update="applyUpdate(selected.id, $event)" @toggle="toggle(selected)" @remove="remove(selected)" @close="selectedId = null" @focus="startFocus(selected)"
         />
       </scroll-view>
     </wd-popup>
+
+    <todo-focus ref="focusRef" />
 
     <list-settings v-model="settingsOpen" :list="settingsList" :me="me" @saved="onListSaved" @removed="onListRemoved" />
 
@@ -788,6 +856,18 @@ onUnload(() => clearInterval(poller))
     color: var(--wot-color-theme);
     background: var(--ot-fill);
   }
+}
+
+.ot-todo__focus-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+  cursor: pointer;
 }
 
 .ot-todo__sort {

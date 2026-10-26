@@ -1,5 +1,5 @@
 import type { TodoLike } from './views'
-import { allTags, dueLabel, groupTodos, isOverdue, matchesView, sortTodos, viewCounts } from './views'
+import { allTags, dueLabel, groupTodos, isOverdue, matchesView, quadrantDefaults, quadrantOf, sortTodos, streakOf, viewCounts } from './views'
 
 const TODAY = '2026-10-26'
 let seq = 0
@@ -74,5 +74,23 @@ describe('计数与标签', () => {
     const list = [todo({ dueDate: TODAY, tags: ['a'] }), todo({ listId: 2, dueDate: '2026-10-30', tags: ['a', 'b'] }), todo({ done: true })]
     expect(viewCounts(list, TODAY)).toMatchObject({ 'today': 1, 'week': 2, 'all': 2, 'inbox': 1, 'list:2': 1, 'tag:a': 2, 'tag:b': 1 })
     expect(allTags(list)).toEqual(['a', 'b'])
+  })
+})
+
+describe('四象限与连续天数', () => {
+  it('按优先级与截止日期分到四个象限', () => {
+    expect(quadrantOf({ priority: 3, dueDate: TODAY }, TODAY)).toBe(1)
+    expect(quadrantOf({ priority: 2, dueDate: '2026-10-27' }, TODAY)).toBe(1)
+    expect(quadrantOf({ priority: 2, dueDate: '2026-10-28' }, TODAY)).toBe(2)
+    expect(quadrantOf({ priority: 3, dueDate: null }, TODAY)).toBe(2)
+    expect(quadrantOf({ priority: 1, dueDate: '2026-10-01' }, TODAY)).toBe(3)
+    expect(quadrantOf({ priority: 0, dueDate: null }, TODAY)).toBe(4)
+    expect(quadrantDefaults(3, TODAY)).toEqual({ priority: 1, dueDate: TODAY })
+  })
+
+  it('连续完成天数：今天没完成时从昨天算起，中断即停止', () => {
+    expect(streakOf({ '2026-10-26': 2, '2026-10-25': 1, '2026-10-24': 3, '2026-10-22': 1 }, TODAY)).toBe(3)
+    expect(streakOf({ '2026-10-25': 1, '2026-10-24': 1 }, TODAY)).toBe(2)
+    expect(streakOf({ '2026-10-24': 1 }, TODAY)).toBe(0)
   })
 })

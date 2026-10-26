@@ -3,14 +3,17 @@ import type { IAnniversary, IAnniversaryForm } from '@/api/anniversary'
 import type { AnnivRule } from './calc'
 import type { FestivalPreset } from './presets'
 import dayjs from 'dayjs'
-import { deleteAnniversary, listAnniversaries, updateAnniversary } from '@/api/anniversary'
+import { deleteAnniversary, deleteBackground, listAnniversaries, updateAnniversary, uploadBackground } from '@/api/anniversary'
+import { absoluteApiUrl } from '@/api/files'
 import { toast } from '@/utils/common'
 import { userKey } from '@/utils/user-storage'
-import { today as localToday, weekday } from '../datecalc/date'
+import { diffDays, today as localToday, weekday } from '../datecalc/date'
 import { upcomingHolidays } from '../datecalc/lunar'
 import { birthInfo, describeDate, lunarText, milestones, upcomingOccurrences } from './calc'
 import AnnivEditor from './components/anniv-editor.vue'
 import AnnivPoster from './components/anniv-poster.vue'
+import AnnivShare from './components/anniv-share.vue'
+import { pickBackground } from './image'
 import { compareDisplay, countdownParts, displayOf, nthLabel } from './display'
 import { CATEGORIES, categoryOf, FESTIVALS, gradientOf } from './presets'
 
@@ -73,6 +76,42 @@ const filtered = computed(() => items.value
 
 /** 顶部大卡片：置顶的第一个 */
 const hero = computed(() => items.value.find(a => a.pinned))
+
+/** 卡片背景：有背景图时叠一层暗色，保证白字看得清 */
+function bgOf(a: IAnniversary) {
+  return a.background
+    ? `linear-gradient(rgba(0,0,0,0.2), rgba(0,0,0,0.45)), url(${absoluteApiUrl(a.background)}) center / cover no-repeat`
+    : gradientOf(a.color).css
+}
+
+/* ---------------- 时间线 ---------------- */
+
+type Layout = 'cards' | 'timeline'
+const layout = ref<Layout>(readPref<Layout>('ot-anniv-layout', 'cards'))
+watch(layout, v => writePref('ot-anniv-layout', v))
+const LAYOUTS = [
+  { value: 'cards', label: '卡片' },
+  { value: 'timeline', label: '时间线' },
+]
+
+/** 时间线：有起始日期的按起始日期从早到晚，按年份分组；没有年份的（节日）不在时间线里 */
+const timeline = computed(() => {
+  const list = filtered.value
+    .map(a => ({ a, origin: d(a).summary.origin }))
+    .filter((x): x is { a: IAnniversary, origin: string } => !!x.origin)
+    .sort((x, y) => x.origin.localeCompare(y.origin))
+  const groups: { year: string, items: typeof list }[] = []
+  for (const x of list) {
+    const year = x.origin.slice(0, 4)
+    const g = groups[groups.length - 1]
+    if (g?.year === year)
+      g.items.push(x)
+    else
+      groups.push({ year, items: [x] })
+  }
+  return groups
+})
+const noOrigin = computed(() => filtered.value.filter(a => !d(a).summary.origin).length)
 
 /** 下一个法定节假日 */
 const holiday = computed(() => upcomingHolidays(today.value, 1)[0])
@@ -176,6 +215,52 @@ function remove(a: IAnniversary) {
   })
 }
 
+/* ---------------- 分享链接、背景图 ---------------- */
+
+const shareOpen = ref(false)
+function onShareChanged(meta: { id: number, shareCode: string | null, shareLocked: boolean, shareExpiresAt: number }) {
+  const a = items.value.find(x => x.id === meta.id)
+  if (a)
+    Object.assign(a, { shareCode: meta.shareCode, shareLocked: meta.shareLocked, shareExpiresAt: meta.shareExpiresAt })
+}
+
+const uploading = ref(false)
+async function changeBackground(a: IAnniversary) {
+  try {
+    const img = await pickBackground()
+    uploading.value = true
+    const { background } = await uploadBackground(a.id, img.data, img.type)
+    const item = items.value.find(x => x.id === a.id)
+    if (item)
+      Object.assign(item, { background, hasBackground: true })
+    if (detail.value?.id === a.id)
+      detail.value = item ?? detail.value
+    toast('背景图已更新', 'success')
+  }
+  catch (e: any) {
+    if (e?.message)
+      toast(e.message)
+  }
+  finally {
+    uploading.value = false
+  }
+}
+
+function removeBackground(a: IAnniversary) {
+  uni.showModal({
+    title: '移除背景图',
+    content: '移除后恢复为渐变色背景。',
+    success: async ({ confirm }) => {
+      if (!confirm)
+        return
+      await deleteBackground(a.id)
+      const item = items.value.find(x => x.id === a.id)
+      if (item)
+        Object.assign(item, { background: null, hasBackground: false })
+    },
+  })
+}
+
 /* ---------------- 分享图 ---------------- */
 
 const poster = ref<InstanceType<typeof AnnivPoster>>()
@@ -203,7 +288,7 @@ onUnload(() => clearInterval(ticker))
 <template>
   <ot-tool-layout :max-width="1100">
     <!-- 置顶大卡片 -->
-    <view v-if="hero" class="ot-av__hero" :style="{ background: gradientOf(hero.color).css }" @click="detail = hero">
+    <view v-if="hero" class="ot-av__hero" :style="{ background: bgOf(hero) }" @click="detail = hero">
       <view class="min-w-0 flex-1">
         <view class="flex items-center gap-2">
           <text class="text-28px">{{ hero.emoji || categoryOf(hero.category).emoji }}</text>
@@ -239,6 +324,7 @@ onUnload(() => clearInterval(ticker))
             {{ c.emoji }} {{ c.label }}
           </view>
         </ot-hscroll>
+        <ot-segmented v-model="layout" :options="LAYOUTS" size="small" />
         <wd-button size="small" type="info" plain @click="festivalOpen = true">
           节日库
         </wd-button>
@@ -253,6 +339,20 @@ onUnload(() => clearInterval(ticker))
       <view v-else-if="!filtered.length" class="ot-av__empty">
         <text class="text-40px">🎈</text>
         <text class="mt-2 text-13px text-muted">还没有纪念日。记下生日、在一起的日子、重要考试，或者从「节日库」添加</text>
+      </view>
+      <view v-else-if="layout === 'timeline'" class="ot-av__timeline">
+        <view v-for="g in timeline" :key="g.year" class="ot-av__tl-year">
+          <text class="ot-av__tl-yearnum">{{ g.year }}</text>
+          <view v-for="x in g.items" :key="x.a.id" class="ot-av__tl-item" @click="detail = x.a">
+            <view class="ot-av__tl-dot" :style="{ background: gradientOf(x.a.color).from }" />
+            <text class="ot-av__tl-date">{{ x.origin.slice(5) }}</text>
+            <text class="shrink-0">{{ x.a.emoji || categoryOf(x.a.category).emoji }}</text>
+            <text class="min-w-0 flex-1 truncate text-main">{{ x.a.title }}</text>
+            <text class="shrink-0 text-12px text-muted">{{ x.origin > today ? `还有 ${diffDays(today, x.origin)} 天` : `已经 ${d(x.a).summary.totalDays ?? 0} 天` }}</text>
+          </view>
+        </view>
+        <text v-if="noOrigin" class="mt-2 block text-12px text-muted">另有 {{ noOrigin }} 个没有年份的纪念日（如节日）不在时间线中</text>
+        <text v-if="!timeline.length" class="block py-8 text-center text-13px text-muted">没有设置了年份的纪念日</text>
       </view>
       <view v-else class="ot-av__grid">
         <view v-for="a in filtered" :key="a.id" class="ot-av__card" @click="detail = a">
@@ -282,7 +382,7 @@ onUnload(() => clearInterval(ticker))
     <!-- 详情 -->
     <wd-popup v-model="detailOpen" position="center" :z-index="1000" custom-style="border-radius: 18px; width: min(94vw, 440px); max-height: 90vh; overflow: hidden;">
       <scroll-view v-if="detail && detailInfo" scroll-y class="ot-av__detail">
-        <view class="ot-av__detail-top" :style="{ background: gradientOf(detail.color).css }">
+        <view class="ot-av__detail-top" :style="{ background: bgOf(detail) }">
           <view class="ot-av__close" @click="detail = null">
             <view class="i-carbon-close" />
           </view>
@@ -358,8 +458,17 @@ onUnload(() => clearInterval(ticker))
         </view>
 
         <view class="ot-av__actions">
+          <view class="ot-av__action" :class="{ 'is-on': detail.shareCode }" @click="shareOpen = true">
+            <view :class="detail.shareCode && detail.shareLocked ? 'i-carbon-locked' : 'i-carbon-share'" />{{ detail.shareCode ? '已分享' : '分享' }}
+          </view>
           <view class="ot-av__action" @click="posterOpen = !posterOpen">
             <view class="i-carbon-image" />{{ posterOpen ? '收起分享图' : '分享图' }}
+          </view>
+          <view class="ot-av__action" @click="changeBackground(detail)">
+            <view :class="uploading ? 'i-carbon-renew animate-spin' : 'i-carbon-image-copy'" />{{ detail.background ? '换背景' : '背景图' }}
+          </view>
+          <view v-if="detail.background" class="ot-av__action" @click="removeBackground(detail)">
+            <view class="i-carbon-close-outline" />移除背景
           </view>
           <view class="ot-av__action" @click="togglePin(detail)">
             <view :class="detail.pinned ? 'i-carbon-pin-filled' : 'i-carbon-pin'" />{{ detail.pinned ? '取消置顶' : '置顶' }}
@@ -394,6 +503,8 @@ onUnload(() => clearInterval(ticker))
         <text class="mt-4 block text-12px text-muted">添加后可以修改提醒、颜色等设置；除夕按农历腊月最后一天计算。</text>
       </scroll-view>
     </wd-popup>
+
+    <anniv-share v-if="detail" :id="detail.id" v-model="shareOpen" :title="detail.title" @changed="onShareChanged" />
 
     <anniv-editor v-model="editorOpen" :item="editing" :preset="preset" @saved="onSaved" />
   </ot-tool-layout>
@@ -633,6 +744,64 @@ onUnload(() => clearInterval(ticker))
   &.is-danger:hover {
     color: #ef4444;
   }
+
+  &.is-on {
+    color: var(--wot-color-theme);
+  }
+}
+
+.ot-av__timeline {
+  margin-top: 14px;
+  padding-left: 6px;
+}
+
+.ot-av__tl-year {
+  position: relative;
+  padding-left: 18px;
+  border-left: 2px solid var(--ot-border);
+  padding-bottom: 12px;
+}
+
+.ot-av__tl-yearnum {
+  display: block;
+  margin: 0 0 6px -18px;
+  padding-left: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ot-text-2);
+}
+
+.ot-av__tl-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--ot-fill);
+  }
+}
+
+.ot-av__tl-dot {
+  position: absolute;
+  left: -24px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px var(--ot-card);
+}
+
+.ot-av__tl-date {
+  flex-shrink: 0;
+  width: 42px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ot-text-3);
 }
 
 .ot-av__fest {

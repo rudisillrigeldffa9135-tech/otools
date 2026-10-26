@@ -1,4 +1,4 @@
-import { derivePreview, deriveTitle } from './note-text'
+import { derivePreview, deriveTitle, extractTasks } from './note-text'
 
 describe('deriveTitle', () => {
   it.each([
@@ -30,5 +30,16 @@ describe('derivePreview', () => {
 describe('derivePreview 细节', () => {
   it('去掉任务标记与表格分隔行，保留下划线', () => {
     expect(derivePreview('# 标题\n- [x] 建 D1\n- [ ] 配 VAULT_KEY\n\n| 环境 | 地址 |\n| --- | --- |\n| 生产 | a-b |')).toBe('建 D1 配 VAULT_KEY 环境 地址 生产 a-b')
+  })
+})
+
+describe('extractTasks', () => {
+  it('提取未完成的任务，跳过已完成、代码块与重复项', () => {
+    const md = ['# 计划', '- [ ] 买菜', '- [x] 已完成的', '* [ ] 交周报 ', '1. [ ] 订机票', '  - [ ] 缩进的子任务', '```', '- [ ] 代码里的', '```', '- [ ] 买菜', '- [ ]', '普通文字 - [ ] 不算'].join('\n')
+    expect(extractTasks(md)).toEqual(['买菜', '交周报', '订机票', '缩进的子任务'])
+  })
+
+  it('最多提取指定数量', () => {
+    expect(extractTasks(Array.from({ length: 80 }, (_, i) => `- [ ] 任务${i}`).join('\n'))).toHaveLength(50)
   })
 })

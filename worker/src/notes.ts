@@ -503,11 +503,11 @@ export async function unshareNote(req: Request, env: Env, params: Record<string,
   return { ...meta(updated!), sharePassword: null }
 }
 
-const SHARE_LIMIT = 20
-const SHARE_WINDOW = 10 * 60
+export const SHARE_LIMIT = 20
+export const SHARE_WINDOW = 10 * 60
 
 /** 常量时间比较，避免按响应时间猜密码 */
-function safeEqual(a: string, b: string) {
+export function safeEqual(a: string, b: string) {
   const x = new TextEncoder().encode(a)
   const y = new TextEncoder().encode(b)
   let diff = x.length ^ y.length

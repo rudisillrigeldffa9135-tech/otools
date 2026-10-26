@@ -4,6 +4,8 @@ import { nextRemind, normalizeDate } from '../../src/pages-tools/anniversary/cal
 import { requireUser } from './auth'
 import { decryptJson, encryptJson } from './crypto'
 import { ApiError, now, readJson } from './lib'
+import { parseSharePassword, randomShareCode, safeEqual, SHARE_LIMIT, SHARE_TTLS, SHARE_WINDOW } from './notes'
+import { assertNotLimited, clientKey, recordFailure } from './ratelimit'
 
 /**
  * 纪念日：标题、备注、表情加密存储；日期规则明文保存，服务端据此计算下一次提醒（见定时任务）与日历订阅。
@@ -126,6 +128,7 @@ export async function toAnniv(env: Env, row: AnnivRow) {
     shareExpiresAt: row.share_expires_at,
     shareLocked: !!row.share_password,
     hasBackground: !!row.bg_key,
+    background: row.bg_key ? bgUrl(row.bg_key) : null,
     sort: row.sort,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -308,4 +311,167 @@ export async function deleteUserAnniversaries(env: Env, userId: number) {
   if (results.length)
     await env.FILES?.delete(results.map(r => r.bg_key)).catch(() => {})
   await env.DB.prepare('DELETE FROM anniversaries WHERE user_id = ?').bind(userId).run()
+}
+
+/* ---------------- 只读分享 ---------------- */
+
+/** 作者本人可见的分享密码（明文） */
+async function sharePasswordOf(env: Env, row: AnnivRow) {
+  return row.share_password ? (await decryptJson<{ p: string }>(env.VAULT_KEY, row.user_id, row.share_password)).p : null
+}
+
+async function shareMeta(env: Env, row: AnnivRow) {
+  const a = await toAnniv(env, row)
+  return { id: a.id, shareCode: a.shareCode, shareExpiresAt: a.shareExpiresAt, shareLocked: a.shareLocked, sharePassword: await sharePasswordOf(env, row) }
+}
+
+/** 本人的分享设置（含密码明文） */
+export async function getShare(req: Request, env: Env, params: Record<string, string>) {
+  const user = await requireUser(req, env)
+  return shareMeta(env, await getRow(env, user.id, parseId(params.id)))
+}
+
+/** 开启或修改分享：已有链接时保留，只改有效期 / 密码；renew 为 true 时换新链接 */
+export async function shareAnniversary(req: Request, env: Env, params: Record<string, string>) {
+  const user = await requireUser(req, env)
+  const row = await getRow(env, user.id, parseId(params.id))
+  const body = await readJson(req)
+  const ttl = Number(body.expiresIn ?? 0)
+  if (!SHARE_TTLS.includes(ttl))
+    throw new ApiError(400, '有效期不正确')
+  const password = parseSharePassword(body.password)
+  const active = !!row.share_code && (!row.share_expires_at || row.share_expires_at > now())
+  const code = !active || body.renew === true ? randomShareCode() : row.share_code!
+  const stored = password === undefined ? row.share_password : password ? await encryptJson(env.VAULT_KEY, user.id, { p: password }) : null
+  const updated = await env.DB.prepare('UPDATE anniversaries SET share_code = ?, share_expires_at = ?, share_password = ? WHERE id = ? AND user_id = ? RETURNING *')
+    .bind(code, ttl ? now() + ttl : 0, stored, row.id, user.id)
+    .first<AnnivRow>()
+  return shareMeta(env, updated!)
+}
+
+export async function unshareAnniversary(req: Request, env: Env, params: Record<string, string>) {
+  const user = await requireUser(req, env)
+  const row = await getRow(env, user.id, parseId(params.id))
+  const updated = await env.DB.prepare('UPDATE anniversaries SET share_code = NULL, share_expires_at = 0, share_password = NULL WHERE id = ? RETURNING *').bind(row.id).first<AnnivRow>()
+  return shareMeta(env, updated!)
+}
+
+/**
+ * 公开查看：凭分享码（设了密码时请求头 X-Share-Password）；不返回备注。
+ * 无效分享码与错误密码按 IP 限流。
+ */
+export async function getSharedAnniversary(req: Request, env: Env, params: Record<string, string>) {
+  const limitKey = `anniv-share:ip:${clientKey(req.headers.get('CF-Connecting-IP') || '')}`
+  await assertNotLimited(env, limitKey, SHARE_LIMIT)
+  const code = params.code
+  const row = /^[A-Z0-9]{6,32}$/i.test(code)
+    ? await env.DB.prepare('SELECT * FROM anniversaries WHERE share_code = ?').bind(code).first<AnnivRow>()
+    : null
+  if (!row || (row.share_expires_at && row.share_expires_at <= now())) {
+    await recordFailure(env, limitKey, SHARE_WINDOW)
+    throw new ApiError(404, '分享不存在、已取消或已过期')
+  }
+  if (row.share_password) {
+    let given = req.headers.get('X-Share-Password') || ''
+    try {
+      given = decodeURIComponent(given)
+    }
+    catch {}
+    if (!given)
+      throw new ApiError(403, '这条分享需要访问密码')
+    if (!safeEqual(given, (await sharePasswordOf(env, row))!)) {
+      await recordFailure(env, limitKey, SHARE_WINDOW)
+      throw new ApiError(403, '访问密码错误')
+    }
+  }
+  const a = await toAnniv(env, row)
+  return {
+    title: a.title,
+    emoji: a.emoji,
+    category: a.category,
+    color: a.color,
+    date: a.date,
+    repeat: a.repeat,
+    countFromOne: a.countFromOne,
+    leapRule: a.leapRule,
+    feb29Rule: a.feb29Rule,
+    time: a.time,
+    background: row.bg_key ? bgUrl(row.bg_key) : null,
+    shareExpiresAt: row.share_expires_at,
+  }
+}
+
+/* ---------------- 背景图 ---------------- */
+
+export const MAX_BG_BYTES = 2 * 1024 * 1024
+const MAX_BG_PER_USER = 50
+const BG_TYPES: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
+
+/** 背景图地址：key 里含随机 UUID，无法猜到；更换后地址随之改变，可以长期缓存 */
+export function bgUrl(key: string) {
+  return `/api/anniv-bg/${key.split('/').pop()}`
+}
+
+/** 上传背景图：请求体就是图片本身（前端已压缩），最大 2 MB */
+export async function uploadBackground(req: Request, env: Env, params: Record<string, string>) {
+  const user = await requireUser(req, env)
+  if (!env.FILES)
+    throw new ApiError(503, '服务器尚未开通 R2 存储，暂时不能上传背景图')
+  const row = await getRow(env, user.id, parseId(params.id))
+  const type = (req.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase()
+  const ext = BG_TYPES[type]
+  if (!ext)
+    throw new ApiError(400, '只支持 JPG、PNG、WebP 图片')
+  const size = Number(req.headers.get('Content-Length') || 0)
+  if (size > MAX_BG_BYTES)
+    throw new ApiError(413, '图片不能超过 2 MB')
+  const data = new Uint8Array(await req.arrayBuffer())
+  if (!data.length || data.length > MAX_BG_BYTES)
+    throw new ApiError(data.length ? 413 : 400, data.length ? '图片不能超过 2 MB' : '没有收到图片')
+  // 简单校验文件头，避免把其他内容当图片存
+  const isJpeg = data[0] === 0xFF && data[1] === 0xD8
+  const isPng = data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4E && data[3] === 0x47
+  const isWebp = data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50
+  if (!(ext === 'jpg' ? isJpeg : ext === 'png' ? isPng : isWebp))
+    throw new ApiError(400, '图片文件不正确')
+  if (!row.bg_key) {
+    const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM anniversaries WHERE user_id = ? AND bg_key IS NOT NULL').bind(user.id).first<{ n: number }>()
+    if ((count?.n ?? 0) >= MAX_BG_PER_USER)
+      throw new ApiError(400, `最多给 ${MAX_BG_PER_USER} 个纪念日设置背景图`)
+  }
+  const key = `keep/anniv/${crypto.randomUUID()}.${ext}`
+  await env.FILES.put(key, data, { httpMetadata: { contentType: type } })
+  await env.DB.prepare('UPDATE anniversaries SET bg_key = ?, updated_at = ? WHERE id = ?').bind(key, now(), row.id).run()
+  if (row.bg_key)
+    await env.FILES.delete(row.bg_key).catch(() => {})
+  return { background: bgUrl(key) }
+}
+
+export async function deleteBackground(req: Request, env: Env, params: Record<string, string>) {
+  const user = await requireUser(req, env)
+  const row = await getRow(env, user.id, parseId(params.id))
+  if (row.bg_key) {
+    await env.DB.prepare('UPDATE anniversaries SET bg_key = NULL, updated_at = ? WHERE id = ?').bind(now(), row.id).run()
+    await env.FILES?.delete(row.bg_key).catch(() => {})
+  }
+  return null
+}
+
+/** 公开读取背景图（分享页也要用）；文件名是随机 UUID */
+export async function serveBackground(_req: Request, env: Env, params: Record<string, string>) {
+  const name = params.name
+  if (!/^[0-9a-f-]{36}\.(?:jpg|png|webp)$/.test(name) || !env.FILES)
+    return new Response('Not Found', { status: 404 })
+  const key = `keep/anniv/${name}`
+  const used = await env.DB.prepare('SELECT 1 FROM anniversaries WHERE bg_key = ?').bind(key).first()
+  const obj = used ? await env.FILES.get(key) : null
+  if (!obj)
+    return new Response('Not Found', { status: 404 })
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  })
 }

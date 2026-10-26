@@ -182,3 +182,34 @@ export function allTags(todos: TodoLike[]) {
   }
   return [...map].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([tag]) => tag)
 }
+
+/** 四象限：1 重要且紧急、2 重要不紧急、3 紧急不重要、4 不重要不紧急 */
+export type Quadrant = 1 | 2 | 3 | 4
+
+/** 重要：中、高优先级；紧急：明天及以前到期（含逾期） */
+export function quadrantOf(t: Pick<TodoLike, 'priority' | 'dueDate'>, today: string): Quadrant {
+  const important = t.priority >= 2
+  const urgent = !!t.dueDate && t.dueDate <= addDays(today, 1)
+  if (important)
+    return urgent ? 1 : 2
+  return urgent ? 3 : 4
+}
+
+/** 在某个象限里新建待办时的默认值 */
+export function quadrantDefaults(q: Quadrant, today: string) {
+  return {
+    priority: q === 1 ? 3 : q === 2 ? 2 : q === 3 ? 1 : 0,
+    dueDate: q === 1 || q === 3 ? today : null,
+  }
+}
+
+/** 连续完成天数：从今天（今天还没完成则从昨天）往前数，每天至少完成 1 项 */
+export function streakOf(days: Record<string, number>, today: string) {
+  let d = (days[today] ?? 0) > 0 ? today : addDays(today, -1)
+  let n = 0
+  while ((days[d] ?? 0) > 0 && n < 3650) {
+    n++
+    d = addDays(d, -1)
+  }
+  return n
+}

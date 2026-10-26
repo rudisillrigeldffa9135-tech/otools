@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import { createNote, deleteNote, getNote, listFolders, listNotes, shareNote, unshareNote, updateNote } from '@/api/notes'
 import { copyText, toast } from '@/utils/common'
 import { userKey } from '@/utils/user-storage'
+import { createTodo } from '@/api/todo'
 import { getPageUrl } from '@/utils/site'
 import QrView from '../qrcode/components/qr-view.vue'
 import MdView from './components/md-view.vue'
@@ -16,7 +17,7 @@ import H5Textarea from './components/h5-textarea'
 import { createScrollSync } from './scroll-sync'
 // #endif
 import { countText, extractOutline } from './markdown'
-import { derivePreview, deriveTitle } from './note-text'
+import { derivePreview, deriveTitle, extractTasks } from './note-text'
 
 definePage({
   style: { navigationBarTitleText: 'Markdown 便签' },
@@ -647,6 +648,34 @@ function remove(id?: number) {
   })
 }
 
+/** 把便签里未完成的任务（- [ ] xxx）添加到待办的收集箱 */
+function tasksToTodos() {
+  const c = current.value
+  const tasks = extractTasks(c?.content ?? '')
+  if (!tasks.length)
+    return toast('没有找到未完成的任务（以 - [ ] 开头的行）')
+  uni.showModal({
+    title: '转为待办',
+    content: `找到 ${tasks.length} 个未完成的任务，添加到待办的「收集箱」？`,
+    success: async ({ confirm }) => {
+      if (!confirm)
+        return
+      const source = `来自便签「${deriveTitle(c?.content ?? '') || '无标题'}」`
+      let ok = 0
+      for (const title of tasks) {
+        try {
+          await createTodo({ title, note: source })
+          ok++
+        }
+        catch {
+          break
+        }
+      }
+      toast(ok === tasks.length ? `已添加 ${ok} 个待办` : `添加了 ${ok} 个，其余失败`, ok ? 'success' : 'none')
+    },
+  })
+}
+
 function exportMarkdown() {
   const c = current.value
   if (!c?.content)
@@ -1125,6 +1154,9 @@ const showList = computed(() => wide.value || !current.value)
           <view class="flex-1" />
           <view class="ot-notes__action" @click="copyText(current.content)">
             <view class="i-carbon-copy" />复制全文
+          </view>
+          <view class="ot-notes__action" @click="tasksToTodos">
+            <view class="i-carbon-task-add" />转为待办
           </view>
           <view class="ot-notes__action" @click="exportMarkdown">
             <!-- #ifdef H5 -->
