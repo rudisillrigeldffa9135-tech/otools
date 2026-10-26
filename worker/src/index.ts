@@ -8,6 +8,7 @@
  */
 import type { Env } from './lib'
 import * as admin from './admin'
+import * as anniversary from './anniversary'
 import * as auth from './auth'
 import * as dns from './dns'
 import * as files from './files'
@@ -101,6 +102,11 @@ route('PUT', '/api/todo-lists/:id', todo.updateList)
 route('DELETE', '/api/todo-lists/:id', todo.deleteList)
 route('POST', '/api/todo-lists/:id/members', todo.addMember)
 route('DELETE', '/api/todo-lists/:id/members/:userId', todo.removeMember)
+
+route('GET', '/api/anniversaries', anniversary.listAnniversaries)
+route('POST', '/api/anniversaries', anniversary.createAnniversary)
+route('PUT', '/api/anniversaries/:id', anniversary.updateAnniversary)
+route('DELETE', '/api/anniversaries/:id', anniversary.deleteAnniversary)
 
 route('GET', '/api/ip', network.myIp)
 route('GET', '/api/dns', dns.lookup)
