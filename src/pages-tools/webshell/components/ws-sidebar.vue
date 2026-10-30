@@ -13,8 +13,30 @@ const props = defineProps<{ session: Session }>()
 
 const st = computed(() => monState(props.session.key))
 const s = computed(() => props.session)
+const info = computed(() => st.value.info)
 const sortBy = ref<'mem' | 'cpu'>('mem')
 const iface = ref('')
+
+const SYS_KEY = 'ot-webshell-sysinfo-open'
+const sysOpen = ref(localStorage.getItem(SYS_KEY) !== '0')
+watch(sysOpen, v => localStorage.setItem(SYS_KEY, v ? '1' : '0'))
+
+/** 系统信息行：值为空的不显示 */
+const sysRows = computed(() => {
+  const i = info.value
+  if (!i)
+    return []
+  const mem = st.value.sample?.mem.total
+  return [
+    ['系统', i.os],
+    ['内核', i.kernel],
+    ['CPU', i.cpu ? `${i.cpu}${i.cores ? ` × ${i.cores}` : ''}` : (i.cores ? `${i.cores} 核` : '')],
+    ['内存', mem ? formatBytes(mem) : ''],
+    ['主机名', i.hostname],
+    ['当前用户', i.user],
+    ['内网 IP', i.ips.join('  ')],
+  ].filter(([, v]) => v) as [string, string][]
+})
 
 const procs = computed(() => [...(st.value.sample?.ps ?? [])]
   .sort((a, b) => sortBy.value === 'mem' ? b.rss - a.rss : b.cpu - a.cpu)
@@ -82,6 +104,20 @@ function procMenu(e: MouseEvent, p: Proc) {
       <span class="ws-sb__dot" :class="`is-${s.status}`" :title="s.status === 'connected' ? '已连接' : '未连接'" />
       <span class="ot-mono min-w-0 flex-1 truncate" :title="s.host.host">{{ s.host.host }}</span>
       <span class="ws-sb__link" @click="copyText(s.host.host)">复制</span>
+    </div>
+
+    <!-- 系统信息 -->
+    <div v-if="s.status === 'connected' && sysRows.length" class="ws-sb__sys">
+      <div class="ws-sb__sys-h" @click="sysOpen = !sysOpen">
+        <span :class="sysOpen ? 'i-carbon-caret-down' : 'i-carbon-caret-right'" />
+        <span class="flex-1">系统信息</span>
+      </div>
+      <div v-show="sysOpen" class="ws-sb__sys-b">
+        <div v-for="[k, v] in sysRows" :key="k" class="ws-sb__sys-r" :title="v">
+          <span class="ws-sb__sys-k">{{ k }}</span>
+          <span class="ws-sb__sys-v" :class="{ 'ot-mono': k === '内网 IP' }">{{ v }}</span>
+        </div>
+      </div>
     </div>
 
     <template v-if="s.status !== 'connected'">
@@ -249,6 +285,50 @@ function procMenu(e: MouseEvent, p: Proc) {
   padding: 20px 0;
   text-align: center;
   color: var(--ot-text-3);
+}
+
+.ws-sb__sys {
+  border: 1px solid var(--ot-border);
+  border-radius: 2px;
+  background: var(--ot-card);
+}
+
+.ws-sb__sys-h {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  font-weight: 600;
+  color: var(--ot-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ws-sb__sys-b {
+  padding: 2px 6px 4px;
+}
+
+.ws-sb__sys-r {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.ws-sb__sys-k {
+  flex-shrink: 0;
+  width: 48px;
+  color: var(--ot-text-3);
+}
+
+.ws-sb__sys-v {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ot-text-2);
 }
 
 .ws-sb__meter {

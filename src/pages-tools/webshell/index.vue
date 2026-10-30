@@ -5,6 +5,7 @@ import type { Host } from './lib/types'
 import { useUserStore } from '@/store/user'
 import HostEditor from './components/host-editor.vue'
 import ImportConfig from './components/import-config.vue'
+import ImportFinalshell from './components/import-finalshell.vue'
 import KeyManager from './components/key-manager.vue'
 import WsConnManager from './components/ws-conn-manager.vue'
 import WsDialogs from './components/ws-dialogs.vue'
@@ -41,6 +42,7 @@ const keysOpen = ref(false)
 const snippetsOpen = ref(false)
 const settingsOpen = ref(false)
 const importOpen = ref(false)
+const importFsOpen = ref(false)
 const managerOpen = ref(false)
 
 function layout() {
@@ -237,8 +239,8 @@ onUnload(() => {
         <view v-show="activeKey === 'overview'" class="ws-pane">
           <ws-overview
             :wide="wide" :active="activeKey === 'overview'"
-            @edit-host="editHost" @import-config="importOpen = true" @keys="keysOpen = true"
-            @snippets="snippetsOpen = true" @settings="settingsOpen = true" @lock="doLock"
+            @edit-host="editHost" @import-config="importOpen = true" @import-finalshell="importFsOpen = true"
+            @keys="keysOpen = true" @snippets="snippetsOpen = true" @settings="settingsOpen = true" @lock="doLock"
           />
         </view>
         <view v-for="s in sessions" v-show="activeKey === s.key" :key="s.key" class="ws-pane">
@@ -251,6 +253,7 @@ onUnload(() => {
     <key-manager v-model="keysOpen" />
     <ws-settings v-model="settingsOpen" />
     <import-config v-model="importOpen" />
+    <import-finalshell v-model="importFsOpen" />
     <wd-popup v-model="snippetsOpen" position="center" :z-index="1000" custom-style="border-radius: 16px; width: min(94vw, 520px); height: 70vh; overflow: hidden;">
       <view class="h-70vh flex flex-col bg-[var(--ot-card)]">
         <ws-snippets-panel mode="manage" />
@@ -259,7 +262,7 @@ onUnload(() => {
         </view>
       </view>
     </wd-popup>
-    <ws-conn-manager v-model="managerOpen" @edit-host="editHost" @import-config="importOpen = true" />
+    <ws-conn-manager v-model="managerOpen" @edit-host="editHost" @import-config="importOpen = true" @import-finalshell="importFsOpen = true" />
     <ws-dialogs />
     <ws-menu />
     <!-- #endif -->

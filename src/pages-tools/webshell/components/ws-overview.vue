@@ -14,6 +14,7 @@ const props = defineProps<{ wide: boolean, active: boolean }>()
 const emit = defineEmits<{
   editHost: [host: Host | null]
   importConfig: []
+  importFinalshell: []
   keys: []
   snippets: []
   settings: []
@@ -166,6 +167,14 @@ function newGroup() {
   })
 }
 
+function importMenu() {
+  const items: [string, () => void][] = [
+    ['导入 SSH 配置（~/.ssh/config）', () => emit('importConfig')],
+    ['导入 FinalShell 服务器', () => emit('importFinalshell')],
+  ]
+  uni.showActionSheet({ itemList: items.map(i => i[0]), success: ({ tapIndex }) => items[tapIndex]?.[1]() })
+}
+
 function toggleGroup(id: string) {
   const s = new Set(collapsed.value)
   if (s.has(id))
@@ -246,7 +255,7 @@ function level(p: number) {
         <view class="ws-ov__tool" title="新建分组" @click="newGroup">
           <view class="i-carbon-folder-add" /><text v-if="wide">分组</text>
         </view>
-        <view class="ws-ov__tool" title="导入 SSH 配置" @click="emit('importConfig')">
+        <view class="ws-ov__tool" title="导入服务器（SSH 配置 / FinalShell）" @click="importMenu">
           <view class="i-carbon-document-import" /><text v-if="wide">导入</text>
         </view>
         <view class="ws-ov__tool" title="密钥管理" @click="emit('keys')">
@@ -337,8 +346,8 @@ function level(p: number) {
           <wd-button @click="emit('editHost', null)">
             新建服务器
           </wd-button>
-          <wd-button type="info" plain @click="emit('importConfig')">
-            导入 SSH 配置
+          <wd-button type="info" plain @click="importMenu">
+            导入服务器
           </wd-button>
         </view>
       </view>

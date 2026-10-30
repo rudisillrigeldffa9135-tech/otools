@@ -7,7 +7,7 @@ import { openSession } from '../lib/sessions'
 import { data, remove, save } from '../lib/store'
 import { formatHostPort } from '../lib/util'
 
-const emit = defineEmits<{ editHost: [host: Host | null], importConfig: [] }>()
+const emit = defineEmits<{ editHost: [host: Host | null], importConfig: [], importFinalshell: [] }>()
 const open = defineModel<boolean>({ required: true })
 const keyword = ref('')
 const selectedId = ref('')
@@ -85,6 +85,7 @@ function newMenu(e: MouseEvent) {
     { label: 'SSH 连接', icon: 'i-carbon-terminal', action: () => edit(null) },
     { label: '文件夹', icon: 'i-carbon-folder-add', action: newGroup },
     { label: '导入 SSH 配置…', icon: 'i-carbon-document-import', divider: true, action: () => emit('importConfig') },
+    { label: '导入 FinalShell…', icon: 'i-carbon-migrate', action: () => emit('importFinalshell') },
   ])
 }
 </script>
