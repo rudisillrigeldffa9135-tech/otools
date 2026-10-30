@@ -58,11 +58,52 @@ export function parseSshConfig(text: string): ImportedHost[] {
         port: Number(o.port) || 22,
         username: o.user || '',
         identityFile: (o.identityfile || '').split(/[\\/]/).pop() || '',
-        proxyJump: o.proxyjump && o.proxyjump.toLowerCase() !== 'none' ? o.proxyjump.split(',')[0].replace(/^.*@/, '').replace(/:\d+$/, '') : '',
+        proxyJump: o.proxyjump && o.proxyjump.toLowerCase() !== 'none' ? parseHostInput(o.proxyjump.split(',')[0]).host : '',
       })
     }
   }
   return out
+}
+
+/* ---------------- 地址解析（含 IPv6） ---------------- */
+
+/**
+ * 解析用户输入的地址：host、user@host、host:port、[IPv6]:port、user@IPv6、ssh://…
+ * 不带方括号的 IPv6（含两个及以上冒号）整体视为地址，不拆端口。返回的 host 不带方括号
+ */
+export function parseHostInput(input: string): { host: string, username?: string, port?: number } {
+  let s = input.trim().replace(/^ssh:\/\//i, '').replace(/\/+$/, '')
+  let username: string | undefined
+  const at = s.lastIndexOf('@')
+  if (at > 0) {
+    username = s.slice(0, at)
+    s = s.slice(at + 1)
+  }
+  let port: number | undefined
+  if (s.startsWith('[')) {
+    const end = s.indexOf(']')
+    if (end > 0) {
+      const rest = s.slice(end + 1)
+      if (/^:\d+$/.test(rest))
+        port = Number(rest.slice(1))
+      s = s.slice(1, end)
+    }
+  }
+  else if ((s.match(/:/g) ?? []).length === 1) {
+    const [h, p] = s.split(':')
+    if (/^\d+$/.test(p)) {
+      s = h
+      port = Number(p)
+    }
+  }
+  return { host: s, username, port }
+}
+
+/** 显示用：IPv6 带端口时加方括号 */
+export function formatHostPort(host: string, port: number) {
+  if (!port || port === 22)
+    return host
+  return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`
 }
 
 /* ---------------- 快捷命令变量 ---------------- */

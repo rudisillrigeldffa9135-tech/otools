@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { baseName, breadcrumbs, fillSnippet, isTextLike, joinPath, looksBinary, modeToString, normalizePath, parentPath, parseIdNames, parseOctalMode, parseSshConfig, shellQuote, snippetVars } from './util'
+import { baseName, breadcrumbs, fillSnippet, formatHostPort, isTextLike, joinPath, looksBinary, modeToString, normalizePath, parentPath, parseHostInput, parseIdNames, parseOctalMode, parseSshConfig, shellQuote, snippetVars } from './util'
 
 describe('导入 SSH 配置', () => {
   it('解析主机、默认值、跳板机', () => {
@@ -32,6 +32,30 @@ Host jump2
     expect(hosts[0]).toEqual({ alias: 'web', host: '1.2.3.4', port: 2222, username: 'admin', identityFile: 'id_ed25519', proxyJump: '' })
     expect(hosts[2]).toMatchObject({ host: 'db.example.com', username: 'root', port: 22, proxyJump: 'web' })
     expect(hosts[3]).toMatchObject({ host: 'jump2', proxyJump: '' })
+  })
+})
+
+describe('地址解析（含 IPv6）', () => {
+  it('各种写法', () => {
+    expect(parseHostInput('1.2.3.4')).toEqual({ host: '1.2.3.4', username: undefined, port: undefined })
+    expect(parseHostInput('root@example.com:2222')).toEqual({ host: 'example.com', username: 'root', port: 2222 })
+    expect(parseHostInput('ssh://ubuntu@1.2.3.4')).toMatchObject({ host: '1.2.3.4', username: 'ubuntu' })
+    // 不带方括号的 IPv6 整体是地址，末尾的 :1 不是端口
+    expect(parseHostInput('2001:db8::1')).toEqual({ host: '2001:db8::1', username: undefined, port: undefined })
+    expect(parseHostInput('root@2408:8000:1:2::abcd')).toMatchObject({ host: '2408:8000:1:2::abcd', username: 'root', port: undefined })
+    expect(parseHostInput('[2001:db8::1]:2222')).toMatchObject({ host: '2001:db8::1', port: 2222 })
+    expect(parseHostInput('admin@[::1]')).toMatchObject({ host: '::1', username: 'admin', port: undefined })
+  })
+
+  it('显示', () => {
+    expect(formatHostPort('2001:db8::1', 2222)).toBe('[2001:db8::1]:2222')
+    expect(formatHostPort('2001:db8::1', 22)).toBe('2001:db8::1')
+    expect(formatHostPort('example.com', 2222)).toBe('example.com:2222')
+  })
+
+  it('sSH 配置里 ProxyJump 是 IPv6', () => {
+    const [h] = parseSshConfig('Host a\n  HostName 2001:db8::2\n  ProxyJump root@2001:db8::1\n')
+    expect(h).toMatchObject({ host: '2001:db8::2', proxyJump: '2001:db8::1' })
   })
 })
 

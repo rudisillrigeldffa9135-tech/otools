@@ -1,4 +1,5 @@
 /** WebShell 的数据模型（全部加密后同步到服务端） */
+import { formatHostPort } from './util'
 
 export type AuthType = 'password' | 'key' | 'interactive'
 
@@ -136,5 +137,5 @@ export function emptyHost(): Host {
 export const HOST_COLORS = ['', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899']
 
 export function hostLabel(h: Pick<Host, 'username' | 'host' | 'port'>) {
-  return `${h.username ? `${h.username}@` : ''}${h.host}${h.port && h.port !== 22 ? `:${h.port}` : ''}`
+  return `${h.username ? `${h.username}@` : ''}${formatHostPort(h.host, h.port)}`
 }

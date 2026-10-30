@@ -217,9 +217,12 @@ export function describeConnectError(e: unknown) {
   return `无法连接：${msg}`
 }
 
-/** 带超时地建立 TCP 连接 */
+/**
+ * 带超时地建立 TCP 连接。
+ * connect() 内部按「主机:端口」解析地址，IPv6 必须带方括号，否则会被当成无法解析的地址直接失败
+ */
 export async function openSocket(host: string, port: number, timeoutMs: number) {
-  const socket = connect({ hostname: host, port })
+  const socket = connect({ hostname: host.includes(':') ? `[${host}]` : host, port })
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([

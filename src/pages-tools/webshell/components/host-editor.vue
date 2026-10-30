@@ -4,6 +4,7 @@ import type { Host } from '../lib/types'
 import { toast } from '@/utils/common'
 import { data, remove, save } from '../lib/store'
 import { emptyHost, HOST_COLORS, hostLabel } from '../lib/types'
+import { parseHostInput } from '../lib/util'
 
 const props = defineProps<{ host: Host | null }>()
 const emit = defineEmits<{ saved: [host: Host, connect: boolean], manageKeys: [] }>()
@@ -70,19 +71,16 @@ function pickGroup(i: number) {
 
 function validate() {
   const f = form.value
-  f.host = f.host.trim().replace(/^ssh:\/\//, '')
-  // 粘贴 user@host:port 时自动拆开
-  const m = f.host.match(/^(?:([^@\s]+)@)?([^@\s:]+|\[[^\]]+\])(?::(\d+))?$/)
-  if (m && (m[1] || m[3])) {
-    f.host = m[2].replace(/^\[|\]$/g, '')
-    if (m[1])
-      f.username = m[1]
-    if (m[3])
-      f.port = Number(m[3])
-  }
+  // 粘贴 user@host:port、[IPv6]:port 等时自动拆开
+  const parsed = parseHostInput(f.host)
+  f.host = parsed.host
+  if (parsed.username)
+    f.username = parsed.username
+  if (parsed.port)
+    f.port = parsed.port
   if (!f.host)
     return '请填写服务器地址'
-  if (!/^[\w.:-]+$/.test(f.host))
+  if (!/^[\w.:%-]+$/.test(f.host))
     return '服务器地址格式不正确'
   if (!Number.isInteger(Number(f.port)) || f.port < 1 || f.port > 65535)
     return '端口需为 1~65535'
