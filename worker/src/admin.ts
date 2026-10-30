@@ -4,6 +4,7 @@ import { hashPassword } from './crypto'
 import { ApiError, isUniqueViolation, now, password, pbkdf2Iterations, readJson, role, str, username } from './lib'
 import { deleteUserFiles } from './files'
 import { deleteUserTodos } from './todo'
+import { deleteUserWebshell } from './webshell'
 import { deleteUserAnniversaries } from './anniversary'
 import { deleteUserNotifications } from './notify'
 
@@ -125,6 +126,7 @@ export async function deleteUser(req: Request, env: Env, params: Record<string, 
   await deleteUserTodos(env, id)
   await deleteUserAnniversaries(env, id)
   await deleteUserNotifications(env, id)
+  await deleteUserWebshell(env, id)
   const results = await env.DB.batch([
     env.DB.prepare('DELETE FROM vault_items WHERE user_id = ?').bind(id),
     env.DB.prepare('DELETE FROM short_links WHERE user_id = ?').bind(id),

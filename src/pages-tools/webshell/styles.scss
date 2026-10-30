@@ -1,0 +1,83 @@
+/* WebShell 各组件与弹窗共用的表单样式，由 index.vue 全局引入 */
+.ws-form {
+  box-sizing: border-box;
+  max-height: 86vh;
+  padding: 20px;
+  overflow-y: auto;
+  color: var(--ot-text);
+  background: var(--ot-card);
+}
+
+.ws-form__label {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  color: var(--ot-text-2);
+}
+
+.ws-form__field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  background: var(--ot-fill);
+
+  &.is-pick {
+    cursor: pointer;
+  }
+
+  &.is-area {
+    align-items: stretch;
+    padding: 10px 12px;
+
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      font-size: 13px;
+    }
+  }
+}
+
+.ws-form__icon {
+  flex-shrink: 0;
+  padding: 4px;
+  font-size: 16px;
+  color: var(--ot-text-3);
+  cursor: pointer;
+}
+
+.ws-form__link {
+  color: var(--wot-color-theme);
+  cursor: pointer;
+}
+
+.ws-form__chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--ot-text-2);
+  background: var(--ot-fill);
+  cursor: pointer;
+
+  &.is-on {
+    color: #fff;
+    background: var(--wot-color-theme);
+  }
+}
+
+.ws-form__color {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+
+  &.is-on {
+    border-color: var(--ot-text);
+  }
+}

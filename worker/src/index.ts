@@ -1,6 +1,7 @@
 /**
  * OTools Cloudflare Worker 入口
  * - /api/*：认证、用户管理、密码库、短链、文本 / 文件快传、便签、我的 IP、DNS、汇率、域名注册信息等接口（D1 + R2 存储）
+ * - /api/webshell/relay：WebShell 的 WebSocket ↔ SSH 服务器 TCP 中转（Durable Object WebShellRelay）
  * - /s/:code：短链跳转
  * - /r/:code：文本快传的纯文本页面（类似 GitHub Raw）
  * - 其余请求：交给静态资源（H5 构建产物 dist/build/h5），见 wrangler.jsonc 的 assets 配置
@@ -22,7 +23,10 @@ import * as rates from './rates'
 import * as shortlink from './shortlink'
 import * as todo from './todo'
 import * as vault from './vault'
+import * as webshell from './webshell'
 import * as whois from './whois'
+
+export { WebShellRelay } from './webshell-relay'
 
 type Handler = (req: Request, env: Env, params: Record<string, string>) => Promise<unknown>
 
@@ -131,6 +135,19 @@ route('POST', '/api/calendar', calendar.resetCalendar)
 route('DELETE', '/api/calendar', calendar.disableCalendar)
 route('GET', '/api/cal/:token', calendar.serveCalendar)
 
+// WebShell：数据端到端加密，服务端只存密文
+route('GET', '/api/webshell/vault', webshell.getVault)
+route('POST', '/api/webshell/vault', webshell.createVault)
+route('PUT', '/api/webshell/vault', webshell.updateVault)
+route('DELETE', '/api/webshell/vault', webshell.resetVault)
+route('GET', '/api/webshell/items', webshell.listItems)
+route('PUT', '/api/webshell/items/:id', webshell.putItem)
+route('DELETE', '/api/webshell/items/:id', webshell.deleteItem)
+route('POST', '/api/webshell/ticket', webshell.createTicket)
+route('GET', '/api/webshell/relay', webshell.relay)
+route('POST', '/api/webshell/probe', webshell.probe)
+route('GET', '/api/webshell/sessions', webshell.listSessions)
+
 route('GET', '/api/ip', network.myIp)
 route('GET', '/api/dns', dns.lookup)
 
@@ -181,6 +198,7 @@ async function cleanup(env: Env) {
   await todo.cleanupTodos(env)
   const reminded = await notify.dispatchReminders(env)
   await notify.cleanupNotifications(env)
+  await webshell.cleanupWebshell(env)
   await env.DB.batch([
     env.DB.prepare('DELETE FROM pastes WHERE expires_at > 0 AND expires_at <= ?').bind(t),
     env.DB.prepare('DELETE FROM rate_limits WHERE reset_at <= ?').bind(t),

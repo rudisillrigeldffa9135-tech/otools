@@ -12,6 +12,10 @@ export interface Env {
   /** 浏览器推送的 VAPID 密钥对（部署脚本自动生成）：私钥为 JWK JSON，公钥为 base64url */
   VAPID_PRIVATE_KEY?: string
   VAPID_PUBLIC_KEY?: string
+  /** WebShell 的 WebSocket ↔ TCP 中转（Durable Object，见 worker/src/webshell-relay.ts） */
+  WEBSHELL_RELAY?: DurableObjectNamespace
+  /** 'true' 时允许 WebShell 连接内网 / 本机地址，仅用于本地开发连接测试服务器 */
+  WEBSHELL_ALLOW_PRIVATE?: string
 }
 
 export type Role = 'admin' | 'user'

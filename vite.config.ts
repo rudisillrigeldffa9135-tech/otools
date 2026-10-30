@@ -37,6 +37,7 @@ import { createCopyNativeResourcesPlugin } from './vite-plugins/copy-native-reso
 import syncManifestPlugin from './vite-plugins/sync-manifest-plugins'
 import pwaPlugin from './vite-plugins/pwa'
 import toolMetasPlugin from './vite-plugins/tool-metas'
+import webshellWasmPlugin from './vite-plugins/webshell-wasm'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
@@ -155,6 +156,8 @@ export default defineConfig(({ command, mode }) => {
         themeColor: '#f5f6f8',
         backgroundColor: '#f5f6f8',
       }),
+      // WebShell 的浏览器端 SSH 客户端（Go 编译的 WebAssembly），仅 H5
+      UNI_PLATFORM === 'h5' && webshellWasmPlugin({ base: VITE_APP_PUBLIC_BASE }),
       // 打包分析插件，h5 + 生产环境才弹出
       UNI_PLATFORM === 'h5'
       && mode === 'production'

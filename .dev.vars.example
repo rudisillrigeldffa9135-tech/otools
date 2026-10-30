@@ -2,6 +2,9 @@
 # 生成方式：node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 VAULT_KEY=REPLACE_WITH_BASE64_32_BYTES
 
+# WebShell 本地测试时允许连接本机 / 内网地址（线上不要设置）
+# WEBSHELL_ALLOW_PRIVATE=true
+
 # 浏览器推送（可选）：VAPID 密钥对，生成方式见 scripts/cf-prepare.mjs 的 generateVapidKeys
 # VAPID_PRIVATE_KEY={"kty":"EC","crv":"P-256","x":"...","y":"...","d":"..."}
 # VAPID_PUBLIC_KEY=BASE64URL_65_BYTES

@@ -40,17 +40,30 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # WebShell 的 SSH 客户端用 Go 编译为 WebAssembly（vite-plugins/webshell-wasm.ts）
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: webshell-wasm/go.mod
+          cache-dependency-path: webshell-wasm/go.sum
+
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
       - name: 构建 H5
         run: pnpm build:h5:prod
+        env:
+          # 编译失败时直接报错，避免上线一个用不了的 WebShell
+          WEBSHELL_WASM_REQUIRED: '1'
 
       # 干净环境下 easycom 配置不全会导致 wd-* 组件没被打包，页面只剩空标签，这里兜底检查
       - name: 检查组件库已打包
         run: |
           if ! grep -qs "wd-button" dist/build/h5/assets/*.js; then
             echo "::error::构建产物中没有 wot-design-uni 组件，请检查 scripts/create-base-files.js 的 easycom 配置"
+            exit 1
+          fi
+          if ! ls dist/build/h5/static/webshell/ssh-*.wasm >/dev/null 2>&1; then
+            echo "::error::构建产物中没有 WebShell 的 SSH 客户端（ssh-*.wasm）"
             exit 1
           fi
 

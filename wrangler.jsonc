@@ -26,6 +26,11 @@
   "r2_buckets": [
     { "binding": "FILES", "bucket_name": "otools-files" }
   ],
+  // WebShell 中转：每个 SSH 连接一个 Durable Object 实例（免费套餐只能用 SQLite 存储类型的 Durable Object）
+  "durable_objects": {
+    "bindings": [{ "name": "WEBSHELL_RELAY", "class_name": "WebShellRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WebShellRelay"] }],
   // 每 15 分钟清理一次过期的文件（含 R2 对象）、快传、限流记录与会话
   "triggers": { "crons": ["*/15 * * * *"] },
   "vars": {

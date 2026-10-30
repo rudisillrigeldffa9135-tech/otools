@@ -13,6 +13,7 @@
 - 待办事项：清单、子任务、优先级、标签、截止日期与时间；重复任务（含按法定节假日的「每个工作日」）；中文智能识别（「明天下午3点 交周报 !高 #工作」）；共享清单（按用户名邀请成员一起编辑）；日历视图、四象限、完成统计、番茄钟；便签里的「- [ ] 任务」可一键转为待办
 - 纪念日：倒数日与累计天数（起始日算第 1 天或第 0 天可选）、公历 / 农历 / 某月第几个星期几、生日年龄与生肖星座、里程碑、节日库、分享图；卡片 / 时间线视图、自定义背景图（R2）、只读分享链接（可设访问密码与有效期）
 - 提醒：站内提醒、日历订阅（.ics，加到手机 / 电脑自带日历由系统提醒）、浏览器推送（Web Push）；首页「今日」卡片显示今天的待办与近期纪念日
+- WebShell（网页版 SSH 客户端，仅 H5）：多标签终端（xterm.js）、SFTP 文件管理（拖拽上传、在线编辑、权限）、服务器监控（CPU / 内存 / 网络 / 磁盘 / 进程）、快捷命令（支持变量、发送到所有会话）、跳板机、密钥管理；SSH 协议在浏览器里完成（WebAssembly），服务端只转发加密流量；服务器、密码、私钥等用「主密码」端到端加密后云同步
 - 密码体检：弱密码、重复使用、长期未换与泄露检查（k-匿名，不外传密码）
 - 文本快传：多设备间互传文字，取件码或仅链接分享（取件无需登录，猜错取件码按 IP 限流），可设阅后即焚与有效期（含永久）；可选「纯文本」，链接打开后整页只有原文（`/r/<码>`，类似 GitHub Raw，可直接 curl）
 - 支持 PWA：H5 可安装到桌面 / 手机主屏幕，以独立窗口打开，断网时也能打开应用外壳（「我的」页面有「安装到桌面」入口）
@@ -27,7 +28,7 @@
 | 分类 | 工具 |
 | --- | --- |
 | 账号安全 | 密码管理（按网站分组，支持多账号与两步验证码，数据加密同步）、密码体检 |
-| 开发调试 | JSON 格式化、时间戳转换、JWT 解析、正则测试、文本对比、Cron 表达式（Linux / Spring / Quartz） |
+| 开发调试 | WebShell（SSH 终端 / SFTP / 服务器监控）、JSON 格式化、时间戳转换、JWT 解析、正则测试、文本对比、Cron 表达式（Linux / Spring / Quartz） |
 | 编码加密 | Base64 编解码、URL 编解码、哈希计算（MD5/SHA/HMAC）、对称加密（AES / DES / 3DES，兼容 OpenSSL）、字符转义（HTML / Unicode / JS / JSON / 正则 / SQL / XML） |
 | 文本处理 | Markdown 便签、字数统计、命名格式转换、文本批处理、人民币大写、文本快传 |
 | 图片处理 | 图片压缩（批量、格式转换、调整尺寸）、二维码识别（自动解析网址、Wi-Fi、名片等）、图片取色（H5 / 小程序） |
@@ -39,6 +40,7 @@
 ## 开发
 
 需要 Node ≥ 20 与 pnpm ≥ 9（未全局安装 pnpm 时可用 `npx pnpm@10` 代替）。
+WebShell 的 SSH 客户端用 Go 编写、编译为 WebAssembly，构建 H5 时需要 [Go](https://go.dev/dl/) ≥ 1.24（见 `webshell-wasm/go.mod`）；没有安装 Go 时其他工具照常构建，只有 WebShell 不可用。
 
 ```bash
 pnpm install
@@ -67,6 +69,8 @@ pnpm worker:migrate:local
 pnpm worker:dev
 ```
 
+WebShell 本地调试：线上环境不允许连接内网 / 本机地址，本地要连接本机的 SSH 服务时，在 `.dev.vars` 中加入 `WEBSHELL_ALLOW_PRIVATE=true`。
+
 再另开终端 `pnpm dev:h5`，开发环境下 H5 的 `/api` 请求会被 vite 代理到 `http://127.0.0.1:8787`（见 `env/.env.development`）。
 首次打开会进入「初始化管理员」页面，创建的第一个账号即为管理员。
 
@@ -86,7 +90,7 @@ pnpm worker:dev
 ### 自动部署（GitHub Actions）
 
 推送到 `main` 分支后，[.github/workflows/deploy-cloudflare.yml](.github/workflows/deploy-cloudflare.yml) 会自动执行：
-安装依赖 → 构建 H5 → 测试 → 准备 D1、R2 与密钥 → 数据库迁移 → `wrangler deploy`。
+安装 Go 与依赖 → 构建 H5（含 WebShell 的 WebAssembly） → 测试 → 准备 D1、R2 与密钥 → 数据库迁移 → `wrangler deploy`。
 也可以在仓库的 Actions 页面手动运行。走自动部署时，上面的手动步骤 2~5 都不需要做。
 
 一次性配置：在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中添加 3 个 Repository secrets：
@@ -103,6 +107,7 @@ pnpm worker:dev
 - 新的 Cloudflare 账户需要先在控制台打开一次「Workers 和 Pages」，注册 `workers.dev` 子域，否则首次部署会失败
 - 文件快传需要账户开通 R2（Cloudflare 控制台 → R2，免费额度 10 GB，开通时需绑定付款方式）。部署脚本会自动创建存储桶 `otools-files`，并给 `tmp/` 前缀（有效期不超过 31 天的文件）添加「32 天后自动删除」的生命周期规则作为定时清理之外的兜底，更长或永久的文件放在 `keep/` 下不自动删除（旧版本对整个存储桶生效的 8 天规则会被自动移除）；**未开通 R2 时照常部署**，只是文件快传会提示不可用，开通后重新部署即可
 - 浏览器推送用的 VAPID 密钥（`VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY`）由部署脚本在首次部署时自动生成并上传，之后不再变化（变化会导致已订阅的浏览器收不到推送）；本地调试见 `.dev.vars.example`
+- WebShell 的中转使用 Durable Object（`WebShellRelay`，SQLite 存储类型，免费套餐可用），首次部署时由 `wrangler.jsonc` 中的 `migrations` 自动创建，无需额外配置；CI 中会安装 Go 编译 SSH 客户端
 - 多次提交会排队依次部署，不会并发
 
 可选配置（`wrangler.jsonc` 的 `vars`）：
@@ -121,6 +126,12 @@ pnpm worker:dev
 - 登录拦截在前端路由层完成，接口权限由 Worker 校验；其余工具是纯前端代码，静态资源本身不做访问控制
 - 文本 / 文件快传凭 6 位取件码、便签凭 12 位分享码免登录访问（文本快传关闭取件码时改用 16 位链接码，只能通过链接打开）；纯文本页面以 `text/plain` + `nosniff` + CSP sandbox 返回，不会被当作网页执行，且浏览器打开时不带登录信息，阅后即焚的内容打开一次即销毁；猜错按 IP（IPv6 按 /64）限流。文件下载使用 10 分钟有效的签名链接，且一律作为附件下载
 - 密码体检的泄露检查调用 Have I Been Pwned，只发送密码 SHA-1 的前 5 位（k-匿名），由 Worker 在服务端比对
+- WebShell：
+  - 端到端加密：服务器地址、用户名、密码、私钥、快捷命令、已信任的主机密钥、设置都在浏览器里用主密码加密（PBKDF2-SHA256 60 万次派生密钥，加密随机生成的 AES-256-GCM 数据密钥），服务端只存密文，管理员与 Cloudflare 账号持有者都无法解密；**主密码无法找回**，忘记只能重置（删除全部 WebShell 数据）。可选「在此设备上记住」，把不可导出的密钥存在浏览器 IndexedDB 中
+  - SSH 握手、加解密、SFTP 都在浏览器的 WebAssembly 里完成（Go 官方 `x/crypto/ssh` 与 `pkg/sftp`），Worker 只把 WebSocket 与服务器的 TCP 连接对接，看不到密码与终端内容；首次连接会让用户确认主机密钥指纹，变化时警告（防中间人）
+  - 中转需要登录：先用登录态换取 30 秒内有效、只能用一次的票据，再建立 WebSocket；每人最多 20 个同时连接，签发票据与在线检测都有频率限制；只能连接公网地址（Cloudflare 本身无法访问内网与 Cloudflare 网段），不支持 25 端口
+  - 服务端会记录连接的目标地址、端口、时间与流量（用于限制并发与「连接记录」，本人可见，保留 30 天）；概览页的在线检测由 Worker 对服务器的 SSH 端口发起 TCP 连接（不做 SSH 握手）
+  - 用 Durable Object 承载中转是因为普通 Worker 中一条 WebSocket 整体只算一次请求，免费套餐的 10ms CPU 撑不住长连接；Durable Object 每收到一条消息重置 30 秒 CPU 额度，浏览器每 20 秒发送一次心跳。免费套餐的 Durable Object 有每日用量额度（以 Cloudflare 官网为准），长时间、多会话使用建议升级付费套餐
 - 短链跳转（`/s/<短码>`）是公开的，任何人拿到短链都能访问；只有登录用户能创建。管理员可在短链工具中切换到「全部用户」查看、停用或删除任意短链，用于处理滥用
 
 微信小程序 / App 不同域，需要在 `env/.env.production` 中配置 Worker 的完整地址（如 `VITE_SERVER_BASEURL__WEIXIN_RELEASE`），并在小程序后台把该域名加入 request、uploadFile、downloadFile 合法域名（后两项用于文件快传）。
