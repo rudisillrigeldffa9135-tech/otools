@@ -23,6 +23,7 @@ func main() {
 		"resize":          resize,
 		"closeSession":    closeSession,
 		"exec":            execCommand,
+		"ping":            ping,
 		"sftpOpen":        sftpOpen,
 		"sftpClose":       sftpClose,
 		"sftpList":        sftpList,

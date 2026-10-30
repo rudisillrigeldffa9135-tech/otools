@@ -1,15 +1,17 @@
 <script lang="ts" setup>
-// 一个会话（仅 H5）：终端 + 侧边面板（文件、监控、快捷命令），连接中 / 出错时显示遮罩
+// 一个会话（仅 H5），布局仿 FinalShell：左侧监控栏；右侧上方终端 + 命令输入栏，下方「文件 / 命令」面板（可拖动分隔条调整高度）
 import type { Session } from '../lib/sessions'
-import { toast } from '@/utils/common'
+import { copyText, toast } from '@/utils/common'
+import { openMenu } from '../lib/menu'
 import { dropMonState } from '../lib/monitor-state'
-import { closeSession, duplicateSession, getConn, reconnect, writers } from '../lib/sessions'
+import { closeSession, duplicateSession, getConn, layoutPrefs, reconnect, writers } from '../lib/sessions'
 import { dropSftpState } from '../lib/sftp-state'
 import { data, saveSettings } from '../lib/store'
 import { hostLabel } from '../lib/types'
 import { shellQuote } from '../lib/util'
-import WsMonitor from './ws-monitor.vue'
+import WsCmdbar from './ws-cmdbar.vue'
 import WsSftp from './ws-sftp.vue'
+import WsSidebar from './ws-sidebar.vue'
 import WsSnippetsPanel from './ws-snippets-panel.vue'
 import WsTerminal from './ws-terminal.vue'
 
@@ -25,10 +27,15 @@ const emit = defineEmits<{
 
 const s = props.session
 const term = ref<InstanceType<typeof WsTerminal>>()
+const mainEl = ref<HTMLElement>()
 let shellId = 0
 let shellOpenFor = -1
 
 const fullscreen = ref(false)
+/** 右侧区域高度：底部面板最多占到给终端留出 160px 为止 */
+const mainH = ref(600)
+const bottomH = computed(() => Math.max(100, Math.min(props.wide ? layoutPrefs.bottomHeight : Math.min(layoutPrefs.bottomHeight, 300), mainH.value - 160)))
+let resizeObs: ResizeObserver | undefined
 const searching = ref(false)
 const query = ref('')
 const ctrlOn = ref(false)
@@ -118,23 +125,58 @@ watch(() => props.active, (v) => {
   }
 })
 
-watch(() => s.panel, () => nextTick(() => term.value?.fit()))
-watch(fullscreen, () => nextTick(() => term.value?.fit()))
+watch(() => [layoutPrefs.sidebar, layoutPrefs.bottomOpen, bottomH.value, fullscreen.value], () => nextTick(() => term.value?.fit()))
 
 onMounted(() => {
+  resizeObs = new ResizeObserver(() => (mainH.value = mainEl.value?.clientHeight || mainH.value))
+  if (mainEl.value)
+    resizeObs.observe(mainEl.value)
   writers.set(s.key, send)
   if (s.status === 'connected')
     nextTick(openShell)
 })
 onBeforeUnmount(() => {
+  resizeObs?.disconnect()
   writers.delete(s.key)
   dropSftpState(s.key)
   dropMonState(s.key)
 })
 
-function togglePanel(p: Session['panel']) {
-  s.panel = s.panel === p ? '' : p
+/* ---------------- 底部面板与分隔条 ---------------- */
+
+function showBottom(tab: Session['bottom']) {
+  if (layoutPrefs.bottomOpen && s.bottom === tab) {
+    layoutPrefs.bottomOpen = false
+    return
+  }
+  s.bottom = tab
+  layoutPrefs.bottomOpen = true
 }
+
+function startDrag(e: MouseEvent | TouchEvent) {
+  e.preventDefault()
+  const y0 = 'touches' in e ? e.touches[0].clientY : e.clientY
+  const h0 = bottomH.value
+  const max = Math.max(160, mainH.value - 160)
+  const move = (ev: MouseEvent | TouchEvent) => {
+    const y = 'touches' in ev ? ev.touches[0].clientY : ev.clientY
+    layoutPrefs.bottomHeight = Math.round(Math.min(max, Math.max(120, h0 - (y - y0))))
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    window.removeEventListener('touchmove', move)
+    window.removeEventListener('touchend', up)
+    document.body.style.cursor = ''
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+  window.addEventListener('touchmove', move, { passive: false })
+  window.addEventListener('touchend', up)
+  document.body.style.cursor = 'row-resize'
+}
+
+/* ---------------- 终端右键菜单 ---------------- */
 
 function find(prev = false) {
   if (!query.value)
@@ -164,21 +206,25 @@ function changeFont(delta: number) {
   saveSettings({ fontSize }).catch(() => {})
 }
 
-function openMenu() {
-  const items: [string, () => void][] = [
-    ['复制会话（再开一个）', () => duplicateSession(s)],
-    ['清屏', () => term.value?.clear()],
-    ['导出终端内容', exportLog],
-    ['字号放大', () => changeFont(1)],
-    ['字号缩小', () => changeFont(-1)],
-    [fullscreen.value ? '退出全屏' : '全屏', () => (fullscreen.value = !fullscreen.value)],
-    ...(s.hostId ? [['编辑服务器', () => emit('editHost', s.hostId)] as [string, () => void]] : []),
-    ['关闭会话', () => closeSession(s.key)],
-  ]
-  uni.showActionSheet({
-    itemList: items.map(i => i[0]),
-    success: ({ tapIndex }) => items[tapIndex]?.[1](),
-  })
+function termMenu(e: MouseEvent) {
+  const connected = s.status === 'connected'
+  openMenu(e, [
+    { label: '复制', icon: 'i-carbon-copy', hint: 'Ctrl+Shift+C', disabled: !term.value?.hasSelection(), action: () => term.value?.copySelection() },
+    { label: '粘贴', icon: 'i-carbon-paste', hint: 'Ctrl+Shift+V', disabled: !connected, action: () => term.value?.paste() },
+    { label: '全选', icon: 'i-carbon-select-window', action: () => term.value?.selectAll() },
+    { label: '查找', icon: 'i-carbon-search', hint: 'Ctrl+Shift+F', divider: true, action: () => (searching.value = true) },
+    { label: '清屏', icon: 'i-carbon-clean', action: () => term.value?.clear() },
+    { label: '导出终端内容', icon: 'i-carbon-document-export', action: exportLog },
+    { label: '字号放大', icon: 'i-carbon-zoom-in', divider: true, action: () => changeFont(1) },
+    { label: '字号缩小', icon: 'i-carbon-zoom-out', action: () => changeFont(-1) },
+    { label: fullscreen.value ? '退出全屏' : '全屏', icon: 'i-carbon-fit-to-screen', action: () => (fullscreen.value = !fullscreen.value) },
+    { label: layoutPrefs.sidebar ? '隐藏监控栏' : '显示监控栏', icon: 'i-carbon-side-panel-close', action: () => (layoutPrefs.sidebar = !layoutPrefs.sidebar) },
+    { label: '复制会话', icon: 'i-carbon-copy-file', divider: true, action: () => duplicateSession(s) },
+    { label: '重新连接', icon: 'i-carbon-renew', action: () => reconnect(s) },
+    { label: '复制地址', icon: 'i-carbon-copy', action: () => copyText(s.host.host) },
+    { label: '编辑服务器', icon: 'i-carbon-edit', disabled: !s.hostId, action: () => emit('editHost', s.hostId) },
+    { label: '关闭会话', icon: 'i-carbon-close', danger: true, divider: true, action: () => closeSession(s.key) },
+  ])
 }
 
 function cdTo(path: string) {
@@ -221,103 +267,99 @@ function pressKey(k: typeof KEYS[number]) {
     onInput(k.seq)
   term.value?.focus()
 }
-
-const showKeys = computed(() => !props.wide)
 </script>
 
 <template>
-  <view class="ot-ss" :class="{ 'is-full': fullscreen, 'is-wide': wide }">
-    <view class="ot-ss__bar">
-      <view class="ot-ss__dot" :class="`is-${s.status}`" />
-      <text class="ot-ss__label truncate">{{ hostLabel(s.host) }}</text>
-      <view class="flex-1" />
-      <view v-if="s.status === 'closed' || s.status === 'error'" class="ot-ss__btn is-primary" @click="reconnect(s)">
-        <view class="i-carbon-renew" /><text>重连</text>
-      </view>
-      <view class="ot-ss__btn" :class="{ 'is-on': s.panel === 'files' }" title="文件（SFTP）" @click="togglePanel('files')">
-        <view class="i-carbon-folder" /><text v-if="wide">文件</text>
-      </view>
-      <view class="ot-ss__btn" :class="{ 'is-on': s.panel === 'monitor' }" title="服务器监控" @click="togglePanel('monitor')">
-        <view class="i-carbon-dashboard" /><text v-if="wide">监控</text>
-      </view>
-      <view class="ot-ss__btn" :class="{ 'is-on': s.panel === 'snippets' }" title="快捷命令" @click="togglePanel('snippets')">
-        <view class="i-carbon-flash" /><text v-if="wide">命令</text>
-      </view>
-      <view class="ot-ss__btn" title="搜索（Ctrl+Shift+F）" @click="searching = !searching">
-        <view class="i-carbon-search" />
-      </view>
-      <view class="ot-ss__btn" title="更多" @click="openMenu">
-        <view class="i-carbon-overflow-menu-horizontal" />
-      </view>
-    </view>
+  <div class="ws-ss" :class="{ 'is-full': fullscreen }">
+    <!-- 左侧监控栏 -->
+    <div v-if="wide && layoutPrefs.sidebar" class="ws-ss__side">
+      <ws-sidebar :session="s" />
+    </div>
 
-    <view class="ot-ss__body">
-      <view class="ot-ss__main">
-        <view v-if="searching" class="ot-ss__search">
-          <input v-model="query" class="min-w-0 flex-1 text-13px" placeholder="在终端输出中搜索" :focus="true" confirm-type="search" @confirm="find(false)">
-          <view class="i-carbon-chevron-up ot-ss__icon" title="上一个" @click="find(true)" />
-          <view class="i-carbon-chevron-down ot-ss__icon" title="下一个" @click="find(false)" />
-          <view class="i-carbon-close ot-ss__icon" @click="closeSearch" />
-        </view>
-        <view class="ot-ss__term">
-          <ws-terminal ref="term" :settings="data.settings" @data="onInput" @resize="onResize" @search="searching = true" />
-          <view v-if="s.status === 'connecting' && !s.generation" class="ot-ss__overlay">
-            <view class="ot-ss__card">
-              <view class="i-carbon-renew animate-spin text-28px text-[var(--wot-color-theme)]" />
-              <text class="mt-3 text-14px text-main">{{ s.statusText || '正在连接…' }}</text>
-              <text class="mt-1 text-12px text-muted">{{ hostLabel(s.host) }}</text>
-              <wd-button size="small" type="info" plain custom-class="mt-4" @click="closeSession(s.key)">
-                取消
+    <div ref="mainEl" class="ws-ss__main">
+      <!-- 终端 -->
+      <div class="ws-ss__term">
+        <ws-terminal ref="term" :settings="data.settings" @data="onInput" @resize="onResize" @search="searching = true" @menu="termMenu" />
+        <div v-if="searching" class="ws-ss__search">
+          <input v-model="query" class="ws-ss__search-input" placeholder="在终端输出中搜索" @keydown.enter="find($event.shiftKey)" @keydown.esc="closeSearch">
+          <span class="i-carbon-chevron-up ws-ss__icon" title="上一个（Shift+Enter）" @click="find(true)" />
+          <span class="i-carbon-chevron-down ws-ss__icon" title="下一个（Enter）" @click="find(false)" />
+          <span class="i-carbon-close ws-ss__icon" @click="closeSearch" />
+        </div>
+        <div v-if="s.status === 'connecting' && !s.generation" class="ws-ss__overlay">
+          <div class="ws-ss__card">
+            <span class="i-carbon-renew animate-spin text-28px text-[var(--wot-color-theme)]" />
+            <span class="mt-3 text-14px text-main">{{ s.statusText || '正在连接…' }}</span>
+            <span class="mt-1 text-12px text-muted">{{ hostLabel(s.host) }}</span>
+            <wd-button size="small" type="info" plain custom-class="mt-4" @click="closeSession(s.key)">
+              取消
+            </wd-button>
+          </div>
+        </div>
+        <div v-else-if="s.status === 'connecting'" class="ws-ss__toast">
+          <span class="i-carbon-renew animate-spin" />{{ s.statusText || '正在重新连接…' }}
+        </div>
+        <div v-if="s.status === 'error' && !s.generation" class="ws-ss__overlay">
+          <div class="ws-ss__card">
+            <span class="i-carbon-warning-alt text-30px text-red-500" />
+            <span class="mt-3 text-14px text-main font-600">连接失败</span>
+            <span class="mt-2 break-all text-13px text-main">{{ s.error }}</span>
+            <span v-if="s.hint" class="mt-2 text-12px text-muted leading-18px">{{ s.hint }}</span>
+            <div class="mt-4 flex gap-2">
+              <wd-button size="small" @click="reconnect(s)">
+                重试
               </wd-button>
-            </view>
-          </view>
-          <view v-else-if="s.status === 'connecting'" class="ot-ss__toast">
-            <view class="i-carbon-renew animate-spin" />{{ s.statusText || '正在重新连接…' }}
-          </view>
-          <view v-if="s.status === 'error' && !s.generation" class="ot-ss__overlay">
-            <view class="ot-ss__card">
-              <view class="i-carbon-warning-alt text-30px text-red-500" />
-              <text class="mt-3 text-14px text-main font-600">连接失败</text>
-              <text class="mt-2 break-all text-13px text-main">{{ s.error }}</text>
-              <text v-if="s.hint" class="mt-2 text-12px text-muted leading-18px">{{ s.hint }}</text>
-              <view class="mt-4 flex gap-2">
-                <wd-button size="small" @click="reconnect(s)">
-                  重试
-                </wd-button>
-                <wd-button v-if="s.hostId" size="small" type="info" plain @click="emit('editHost', s.hostId)">
-                  编辑服务器
-                </wd-button>
-                <wd-button size="small" type="info" plain @click="closeSession(s.key)">
-                  关闭
-                </wd-button>
-              </view>
-            </view>
-          </view>
-        </view>
-        <view v-if="showKeys" class="ot-ss__keys">
-          <view
-            v-for="k in KEYS" :key="k.label" class="ot-ss__key"
-            :class="{ 'is-on': (k.mod === 'ctrl' && ctrlOn) || (k.mod === 'alt' && altOn) }"
-            @click="pressKey(k)"
-          >
-            {{ k.label }}
-          </view>
-        </view>
-      </view>
+              <wd-button v-if="s.hostId" size="small" type="info" plain @click="emit('editHost', s.hostId)">
+                编辑服务器
+              </wd-button>
+              <wd-button size="small" type="info" plain @click="closeSession(s.key)">
+                关闭
+              </wd-button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-      <view v-if="s.panel" class="ot-ss__panel">
-        <ws-sftp v-if="s.panel === 'files'" :session="s" @cd="cdTo" @close="s.panel = ''" />
-        <ws-monitor v-else-if="s.panel === 'monitor'" :session="s" @close="s.panel = ''" />
-        <ws-snippets-panel v-else-if="s.panel === 'snippets'" @send="runSnippet" @close="s.panel = ''" />
-      </view>
-    </view>
-  </view>
+      <!-- 手机辅助键 -->
+      <div v-if="!wide" class="ws-ss__keys">
+        <span
+          v-for="k in KEYS" :key="k.label" class="ws-ss__key"
+          :class="{ 'is-on': (k.mod === 'ctrl' && ctrlOn) || (k.mod === 'alt' && altOn) }"
+          @click="pressKey(k)"
+        >{{ k.label }}</span>
+      </div>
+
+      <!-- 命令输入栏 -->
+      <ws-cmdbar v-if="wide" @send="runSnippet" />
+
+      <!-- 底部面板：文件 / 命令 -->
+      <div v-if="layoutPrefs.bottomOpen" class="ws-ss__split" title="拖动调整高度" @mousedown="startDrag" @touchstart="startDrag" />
+      <div class="ws-ss__tabs">
+        <span class="ws-ss__tab" :class="{ 'is-on': layoutPrefs.bottomOpen && s.bottom === 'files' }" @click="showBottom('files')">
+          <span class="i-carbon-folder" />文件
+        </span>
+        <span class="ws-ss__tab" :class="{ 'is-on': layoutPrefs.bottomOpen && s.bottom === 'snippets' }" @click="showBottom('snippets')">
+          <span class="i-carbon-flash" />命令
+        </span>
+        <span class="flex-1" />
+        <span v-if="wide" class="ws-ss__tool" :class="{ 'is-on': layoutPrefs.sidebar }" title="显示 / 隐藏监控栏" @click="layoutPrefs.sidebar = !layoutPrefs.sidebar">
+          <span class="i-carbon-side-panel-open" />
+        </span>
+        <span class="ws-ss__tool" :title="layoutPrefs.bottomOpen ? '收起' : '展开'" @click="layoutPrefs.bottomOpen = !layoutPrefs.bottomOpen">
+          <span :class="layoutPrefs.bottomOpen ? 'i-carbon-chevron-down' : 'i-carbon-chevron-up'" />
+        </span>
+      </div>
+      <div v-show="layoutPrefs.bottomOpen" class="ws-ss__bottom" :style="{ height: `${bottomH}px` }">
+        <ws-sftp v-show="s.bottom === 'files'" :session="s" :wide="wide" @cd="cdTo" />
+        <ws-snippets-panel v-if="s.bottom === 'snippets'" layout="bar" @send="runSnippet" />
+      </div>
+    </div>
+  </div>
 </template>
 
 <style lang="scss" scoped>
-.ot-ss {
+.ws-ss {
   display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
   background: var(--ot-card);
@@ -329,139 +371,122 @@ const showKeys = computed(() => !props.wide)
   }
 }
 
-.ot-ss__bar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 38px;
-  padding: 0 8px 0 12px;
-  border-bottom: 1px solid var(--ot-border);
-  font-size: 13px;
-}
-
-.ot-ss__dot {
+.ws-ss__side {
   flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  margin-right: 4px;
-  border-radius: 50%;
-  background: #a1a1aa;
-
-  &.is-connected {
-    background: #22c55e;
-  }
-
-  &.is-connecting {
-    background: #f59e0b;
-  }
-
-  &.is-error,
-  &.is-closed {
-    background: #ef4444;
-  }
+  width: 212px;
+  border-right: 1px solid var(--ot-border);
 }
 
-.ot-ss__label {
+.ws-ss__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-width: 0;
-  color: var(--ot-text-2);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px;
+  min-height: 0;
 }
 
-.ot-ss__btn {
-  display: flex;
+.ws-ss__term {
+  position: relative;
+  flex: 1;
+  min-height: 80px;
+}
+
+.ws-ss__split {
   flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 6px;
-  color: var(--ot-text-2);
-  font-size: 13px;
-  cursor: pointer;
+  height: 5px;
+  margin-bottom: -5px;
+  position: relative;
+  z-index: 2;
+  cursor: row-resize;
 
   &:hover {
-    background: var(--ot-fill);
+    background: color-mix(in srgb, var(--wot-color-theme) 40%, transparent);
   }
+}
+
+.ws-ss__tabs {
+  display: flex;
+  flex-shrink: 0;
+  align-items: stretch;
+  height: 28px;
+  padding: 0 4px;
+  border-top: 1px solid var(--ot-border);
+  border-bottom: 1px solid var(--ot-border);
+  background: var(--ot-fill);
+  font-size: 12px;
+  user-select: none;
+}
+
+.ws-ss__tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  color: var(--ot-text-2);
+  cursor: pointer;
 
   &.is-on {
+    color: var(--ot-text);
+    background: var(--ot-card);
+    box-shadow: inset 0 2px 0 var(--wot-color-theme);
+  }
+}
+
+.ws-ss__tool {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 14px;
+  color: var(--ot-text-3);
+  cursor: pointer;
+
+  &:hover,
+  &.is-on {
     color: var(--wot-color-theme);
-    background: color-mix(in srgb, var(--wot-color-theme) 12%, transparent);
-  }
-
-  &.is-primary {
-    color: #fff;
-    background: var(--wot-color-theme);
   }
 }
 
-.ot-ss__body {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+.ws-ss__bottom {
+  flex-shrink: 0;
   min-height: 0;
 }
 
-.is-wide .ot-ss__body {
-  flex-direction: row;
-}
-
-.ot-ss__main {
-  position: relative;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-.ot-ss__term {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-}
-
-.ot-ss__panel {
-  display: flex;
-  flex-direction: column;
-  height: 46%;
-  min-height: 0;
-  border-top: 1px solid var(--ot-border);
-}
-
-.is-wide .ot-ss__panel {
-  width: 400px;
-  height: auto;
-  border-top: none;
-  border-left: 1px solid var(--ot-border);
-}
-
-.ot-ss__search {
+.ws-ss__search {
   position: absolute;
-  top: 8px;
-  right: 16px;
+  top: 6px;
+  right: 18px;
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   width: min(320px, 80%);
-  height: 34px;
-  padding: 0 6px 0 12px;
-  border-radius: 8px;
+  height: 30px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--ot-border);
+  border-radius: 4px;
   background: var(--ot-card);
-  color: var(--ot-text);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
-.ot-ss__icon {
+.ws-ss__search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  font-size: 13px;
+  color: var(--ot-text);
+  background: transparent;
+  outline: none;
+}
+
+.ws-ss__icon {
   flex-shrink: 0;
-  padding: 4px;
-  font-size: 16px;
+  padding: 3px;
+  font-size: 15px;
   color: var(--ot-text-2);
   cursor: pointer;
 }
 
-.ot-ss__overlay {
+.ws-ss__overlay {
   position: absolute;
   inset: 0;
   z-index: 4;
@@ -472,18 +497,18 @@ const showKeys = computed(() => !props.wide)
   background: rgba(0, 0, 0, 0.35);
 }
 
-.ot-ss__card {
+.ws-ss__card {
   display: flex;
   flex-direction: column;
   align-items: center;
   max-width: 420px;
   padding: 24px 20px;
-  border-radius: 14px;
+  border-radius: 10px;
   text-align: center;
   background: var(--ot-card);
 }
 
-.ot-ss__toast {
+.ws-ss__toast {
   position: absolute;
   top: 10px;
   left: 50%;
@@ -499,7 +524,7 @@ const showKeys = computed(() => !props.wide)
   transform: translateX(-50%);
 }
 
-.ot-ss__keys {
+.ws-ss__keys {
   display: flex;
   flex-shrink: 0;
   gap: 4px;
@@ -510,11 +535,12 @@ const showKeys = computed(() => !props.wide)
   scrollbar-width: none;
 }
 
-.ot-ss__key {
+.ws-ss__key {
   flex-shrink: 0;
   min-width: 34px;
   height: 32px;
   padding: 0 8px;
+  box-sizing: border-box;
   border-radius: 6px;
   font-size: 13px;
   line-height: 32px;

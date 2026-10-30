@@ -6,14 +6,17 @@ import { useUserStore } from '@/store/user'
 import HostEditor from './components/host-editor.vue'
 import ImportConfig from './components/import-config.vue'
 import KeyManager from './components/key-manager.vue'
+import WsConnManager from './components/ws-conn-manager.vue'
 import WsDialogs from './components/ws-dialogs.vue'
 import WsLock from './components/ws-lock.vue'
+import WsMenu from './components/ws-menu.vue'
 import WsOverview from './components/ws-overview.vue'
 import WsSession from './components/ws-session.vue'
 import WsSettings from './components/ws-settings.vue'
 import WsSnippetsPanel from './components/ws-snippets-panel.vue'
+import { openMenu } from './lib/menu'
 import { startMonitor, stopMonitor } from './lib/monitor-state'
-import { activeKey, closeAll, closeSession, openSession, sessions } from './lib/sessions'
+import { activeKey, closeAll, closeSession, duplicateSession, openSession, reconnect, sessions } from './lib/sessions'
 import { data, init, lock, startAutoSync, stopAutoSync } from './lib/store'
 import './styles.scss'
 // #endif
@@ -38,6 +41,7 @@ const keysOpen = ref(false)
 const snippetsOpen = ref(false)
 const settingsOpen = ref(false)
 const importOpen = ref(false)
+const managerOpen = ref(false)
 
 function layout() {
   wide.value = window.innerWidth >= 900
@@ -77,6 +81,43 @@ function closeTab(key: string) {
   else {
     done()
   }
+}
+
+/** 关闭多个标签：有已连接的会话时确认一次 */
+function closeMany(keys: string[]) {
+  const list = sessions.filter(x => keys.includes(x.key))
+  if (!list.length)
+    return
+  const done = () => list.forEach(x => closeSession(x.key))
+  const live = list.filter(x => x.status === 'connected').length
+  if (live && data.settings.confirmClose) {
+    uni.showModal({
+      title: '关闭会话',
+      content: `将断开 ${live} 个已连接的会话，确定吗？`,
+      success: ({ confirm }) => confirm && done(),
+    })
+  }
+  else {
+    done()
+  }
+}
+
+/** 标签右键菜单（仿 FinalShell） */
+function tabMenu(e: MouseEvent, key: string) {
+  const i = sessions.findIndex(x => x.key === key)
+  const s = sessions[i]
+  if (!s)
+    return
+  activeKey.value = key
+  openMenu(e, [
+    { label: '关闭', icon: 'i-carbon-close', action: () => closeTab(key) },
+    { label: '关闭其他标签', icon: 'i-carbon-close-outline', disabled: sessions.length < 2, action: () => closeMany(sessions.filter(x => x.key !== key).map(x => x.key)) },
+    { label: '关闭右侧标签', icon: 'i-carbon-arrow-right', disabled: i === sessions.length - 1, action: () => closeMany(sessions.slice(i + 1).map(x => x.key)) },
+    { label: '关闭全部标签', icon: 'i-carbon-close-filled', action: () => closeMany(sessions.map(x => x.key)) },
+    { label: '复制标签', icon: 'i-carbon-copy-file', divider: true, action: () => duplicateSession(s) },
+    { label: '重新连接', icon: 'i-carbon-renew', action: () => reconnect(s) },
+    { label: '编辑服务器', icon: 'i-carbon-edit', disabled: !s.hostId, action: () => editHostById(s.hostId) },
+  ])
 }
 
 function doLock() {
@@ -173,18 +214,22 @@ onUnload(() => {
     </view>
     <view v-else ref="workspace" class="ws-page__card ws-page__ws" :style="{ height: `${height}px` }">
       <view class="ws-tabs">
+        <view class="ws-tab is-icon" title="连接管理器" @click="managerOpen = true">
+          <view class="i-carbon-folder-details" />
+        </view>
         <view class="ws-tab is-home" :class="{ 'is-active': activeKey === 'overview' }" @click="activeKey = 'overview'">
           <view class="i-carbon-dashboard" /><text>概览</text>
         </view>
         <view
           v-for="s in sessions" :key="s.key" class="ws-tab" :class="{ 'is-active': activeKey === s.key }"
           :title="s.error || s.title" @click="activeKey = s.key" @mousedown.middle.prevent="closeTab(s.key)"
+          @contextmenu="tabMenu($event, s.key)"
         >
           <view class="ws-tab__dot" :class="`is-${s.status}`" />
           <text class="ws-tab__name">{{ s.title }}</text>
           <view class="i-carbon-close ws-tab__close" @click.stop="closeTab(s.key)" />
         </view>
-        <view class="ws-tab is-add" title="打开服务器" @click="activeKey = 'overview'">
+        <view class="ws-tab is-add" title="打开连接管理器" @click="managerOpen = true">
           <view class="i-carbon-add" />
         </view>
       </view>
@@ -214,7 +259,9 @@ onUnload(() => {
         </view>
       </view>
     </wd-popup>
+    <ws-conn-manager v-model="managerOpen" @edit-host="editHost" @import-config="importOpen = true" />
     <ws-dialogs />
+    <ws-menu />
     <!-- #endif -->
 
     <!-- #ifndef H5 -->
@@ -295,9 +342,14 @@ onUnload(() => {
       -1px 0 0 var(--ot-border);
   }
 
-  &.is-add {
+  &.is-add,
+  &.is-icon {
     padding: 0 8px;
     font-size: 16px;
+  }
+
+  &.is-icon {
+    color: #f59e0b;
   }
 }
 

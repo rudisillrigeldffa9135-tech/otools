@@ -23,11 +23,29 @@ export interface Session {
   /** 连接成功的次数，每次重连 +1，组件据此重新打开终端 */
   generation: number
   connectedAt: number
-  /** 侧边面板 */
-  panel: '' | 'files' | 'monitor' | 'snippets'
+  /** 底部面板的当前标签（与 FinalShell 一致：文件 / 命令） */
+  bottom: 'files' | 'snippets'
 }
 
 export const sessions = reactive<Session[]>([])
+
+/** 布局偏好（本机保存）：左侧监控栏是否显示、底部面板是否展开及高度 */
+const LAYOUT_KEY = 'ot-webshell-layout'
+function readLayout() {
+  try {
+    return { sidebar: true, bottomOpen: true, bottomHeight: 220, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}') }
+  }
+  catch {
+    return { sidebar: true, bottomOpen: true, bottomHeight: 220 }
+  }
+}
+export const layoutPrefs = reactive<{ sidebar: boolean, bottomOpen: boolean, bottomHeight: number }>(readLayout())
+watch(layoutPrefs, (v) => {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(v))
+  }
+  catch {}
+})
 /** 当前标签：'overview' 或会话 key */
 export const activeKey = ref('overview')
 
@@ -127,7 +145,7 @@ export function openSession(host: Host) {
     banner: '',
     generation: 0,
     connectedAt: 0,
-    panel: '',
+    bottom: 'files',
   })
   sessions.push(s)
   activeKey.value = s.key

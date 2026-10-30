@@ -19,6 +19,7 @@ const emit = defineEmits<{
   resize: [size: { cols: number, rows: number }]
   title: [title: string]
   search: []
+  menu: [e: MouseEvent]
 }>()
 
 const el = ref<HTMLDivElement>()
@@ -109,10 +110,13 @@ onMounted(() => {
     // 浏览器自带的 Ctrl+V 粘贴走 paste 事件，这里不拦截
     return true
   })
+  // 右键：设置为「右键复制 / 粘贴」时直接复制或粘贴，否则交给会话弹出菜单（与 FinalShell 一致）
   el.value!.addEventListener('contextmenu', (e) => {
-    if (!props.settings.rightClickPaste)
-      return
     e.preventDefault()
+    if (!props.settings.rightClickPaste) {
+      emit('menu', e)
+      return
+    }
     if (!copySelection())
       paste()
     term?.clearSelection()
@@ -146,6 +150,7 @@ defineExpose({
   paste,
   copySelection,
   selectAll: () => term?.selectAll(),
+  hasSelection: () => !!term?.hasSelection(),
   findNext: (q: string, opts?: { caseSensitive?: boolean, regex?: boolean }) => search?.findNext(q, opts),
   findPrevious: (q: string, opts?: { caseSensitive?: boolean, regex?: boolean }) => search?.findPrevious(q, opts),
   clearSearch: () => search?.clearDecorations(),

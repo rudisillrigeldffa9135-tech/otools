@@ -561,3 +561,29 @@ func execCommand(this js.Value, args []js.Value) any {
 		}), nil
 	})
 }
+
+// ping(clientId) => Promise<number>：发送 keepalive 请求并等待服务器回复，返回往返毫秒数（浏览器 → 中转 → 服务器）
+func ping(this js.Value, args []js.Value) any {
+	cid := arg(args, 0).Int()
+	return promise(func() (any, error) {
+		cl, ok := clients.get(cid)
+		if !ok {
+			return nil, errNotFound
+		}
+		start := time.Now()
+		done := make(chan error, 1)
+		go func() {
+			_, _, err := cl.ssh.SendRequest("keepalive@openssh.com", true, nil)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				return nil, newCoded("ssh", err.Error())
+			}
+			return float64(time.Since(start).Microseconds()) / 1000, nil
+		case <-time.After(10 * time.Second):
+			return nil, newCoded("timeout", "超时")
+		}
+	})
+}

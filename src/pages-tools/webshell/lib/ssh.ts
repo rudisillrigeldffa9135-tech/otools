@@ -68,6 +68,8 @@ export interface OtSsh {
   resize: (sid: number, cols: number, rows: number) => boolean
   closeSession: (sid: number) => void
   exec: (id: number, cmd: string, opts?: { timeout?: number, stdin?: string }) => Promise<ExecResult>
+  /** SSH 往返延迟（毫秒） */
+  ping: (id: number) => Promise<number>
   sftpOpen: (id: number) => Promise<number>
   sftpClose: (fid: number) => void
   sftpList: (fid: number, dir: string) => Promise<SftpEntry[]>

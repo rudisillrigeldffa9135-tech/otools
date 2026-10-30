@@ -154,7 +154,7 @@ function duration(s: IWebshellSession) {
           <view class="ws-row__k">
             右键复制 / 粘贴
             <view class="text-11px text-muted">
-              有选中内容时复制，否则粘贴
+              开启后右键直接复制（有选中内容时）或粘贴；关闭时右键弹出菜单（与 FinalShell 一致）
             </view>
           </view>
           <wd-switch :model-value="data.settings.rightClickPaste" size="20px" @change="set('rightClickPaste', $event.value)" />

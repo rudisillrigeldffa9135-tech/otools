@@ -1,16 +1,19 @@
 <script lang="ts" setup>
-// 快捷命令列表：会话里点一下发送到终端；也可以发送到所有已连接的会话
+// 快捷命令：会话里点一下发送到终端，也可以发送到所有已连接的会话。
+// layout=list 为列表（概览中管理）；layout=bar 为会话底部「命令」标签（仿 FinalShell：左侧分类、右侧命令按钮，右键编辑）
 import type { Snippet } from '../lib/types'
-import { toast } from '@/utils/common'
+import { copyText, toast } from '@/utils/common'
+import { openMenu } from '../lib/menu'
 import { broadcast, connectedCount } from '../lib/sessions'
-import { data } from '../lib/store'
+import { data, remove } from '../lib/store'
 import { fillSnippet, snippetVars } from '../lib/util'
 import SnippetEditor from './snippet-editor.vue'
 
 const props = withDefaults(defineProps<{
   /** session：在会话中使用；manage：在概览中管理（发送时发往所有会话） */
   mode?: 'session' | 'manage'
-}>(), { mode: 'session' })
+  layout?: 'list' | 'bar'
+}>(), { mode: 'session', layout: 'list' })
 
 const emit = defineEmits<{ send: [text: string], close: [] }>()
 
@@ -59,6 +62,33 @@ function confirmFill() {
   deliver(fillSnippet(snippet.command, values), snippet.autoRun)
 }
 
+const category = ref('')
+const categories = computed(() => [...new Set(data.snippets.map(s => s.category || '未分类'))].sort((a, b) => (a === '未分类' ? 1 : b === '未分类' ? -1 : a.localeCompare(b, 'zh-CN'))))
+const barItems = computed(() => {
+  const k = keyword.value.trim().toLowerCase()
+  return data.snippets.filter(s => (!category.value || (s.category || '未分类') === category.value)
+    && (!k || s.name.toLowerCase().includes(k) || s.command.toLowerCase().includes(k)))
+})
+
+function tipOf(s: Snippet) {
+  return `${s.command}${s.autoRun ? '' : '\n（发送后不自动回车）'}\n右键可编辑`
+}
+
+function itemMenu(e: MouseEvent, s: Snippet) {
+  openMenu(e, [
+    { label: '执行', icon: 'i-carbon-play', action: () => run(s) },
+    { label: '编辑', icon: 'i-carbon-edit', divider: true, action: () => edit(s) },
+    { label: '复制命令', icon: 'i-carbon-copy', action: () => copyText(s.command) },
+    {
+      label: '删除',
+      icon: 'i-carbon-trash-can',
+      danger: true,
+      divider: true,
+      action: () => uni.showModal({ title: '删除快捷命令', content: `确定删除「${s.name}」吗？`, success: ({ confirm }) => confirm && remove(s.id) }),
+    },
+  ])
+}
+
 function edit(s: Snippet | null) {
   editing.value = s
   editorOpen.value = true
@@ -74,7 +104,39 @@ const fillOpen = computed({
 </script>
 
 <template>
-  <view class="ot-sn">
+  <div v-if="layout === 'bar'" class="ws-snb">
+    <div class="ws-snb__cats">
+      <div class="ws-snb__cat" :class="{ 'is-on': !category }" @click="category = ''">
+        全部<span class="ws-snb__n">{{ data.snippets.length }}</span>
+      </div>
+      <div v-for="c in categories" :key="c" class="ws-snb__cat" :class="{ 'is-on': category === c }" @click="category = c">
+        <span class="truncate">{{ c }}</span>
+      </div>
+    </div>
+    <div class="ws-snb__main">
+      <div class="ws-snb__bar">
+        <input v-model="keyword" class="ws-snb__search" placeholder="搜索命令">
+        <span class="ws-snb__btn" title="新建快捷命令" @click="edit(null)"><span class="i-carbon-add" />新建</span>
+        <span class="ws-snb__btn" :class="{ 'is-on': toAll }" title="发送到所有已连接的会话" @click="toAll = !toAll">
+          <span class="i-carbon-share-knowledge" />全部会话（{{ connectedCount }}）
+        </span>
+      </div>
+      <div class="ws-snb__list">
+        <div v-if="!data.snippets.length" class="ws-snb__empty">
+          把常用命令存起来，点一下就能执行；{{ VAR_TIP }}
+          <span class="ws-snb__link" @click="edit(null)">新建快捷命令</span>
+        </div>
+        <div
+          v-for="s in barItems" :key="s.id" class="ws-snb__item" :title="tipOf(s)"
+          @click="run(s)" @contextmenu="itemMenu($event, s)"
+        >
+          <span class="i-carbon-flash shrink-0 text-amber-500" />
+          <span class="truncate">{{ s.name }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <view v-else class="ot-sn">
     <view class="ot-sn__head">
       <text class="flex-1 text-13px text-main font-600">快捷命令</text>
       <view class="ot-sn__btn" title="新建" @click="edit(null)">
@@ -121,36 +183,36 @@ const fillOpen = computed({
         </view>
       </view>
     </scroll-view>
+  </view>
 
-    <snippet-editor v-model="editorOpen" :snippet="editing" />
+  <snippet-editor v-model="editorOpen" :snippet="editing" />
 
-    <wd-popup v-model="fillOpen" position="center" :z-index="1100" custom-style="border-radius: 16px; width: min(92vw, 420px);">
-      <view v-if="filling" class="ws-form">
-        <view class="text-16px text-main font-600">
-          {{ filling.snippet.name }}
+  <wd-popup v-model="fillOpen" position="center" :z-index="1100" custom-style="border-radius: 16px; width: min(92vw, 420px);">
+    <view v-if="filling" class="ws-form">
+      <view class="text-16px text-main font-600">
+        {{ filling.snippet.name }}
+      </view>
+      <view v-for="v in snippetVars(filling.snippet.command)" :key="v.name">
+        <view class="ws-form__label">
+          {{ v.name }}
         </view>
-        <view v-for="v in snippetVars(filling.snippet.command)" :key="v.name">
-          <view class="ws-form__label">
-            {{ v.name }}
-          </view>
-          <view class="ws-form__field">
-            <input v-model="filling.values[v.name]" class="ot-mono min-w-0 flex-1" :placeholder="v.default || v.name" confirm-type="done" @confirm="confirmFill">
-          </view>
-        </view>
-        <view class="ot-mono mt-3 break-all rounded-8px bg-[var(--ot-fill)] p-2 text-12px text-muted">
-          {{ fillSnippet(filling.snippet.command, filling.values) }}
-        </view>
-        <view class="mt-4 flex justify-end gap-2">
-          <wd-button type="info" plain @click="filling = null">
-            取消
-          </wd-button>
-          <wd-button @click="confirmFill">
-            {{ filling.snippet.autoRun ? '执行' : '发送' }}
-          </wd-button>
+        <view class="ws-form__field">
+          <input v-model="filling.values[v.name]" class="ot-mono min-w-0 flex-1" :placeholder="v.default || v.name" confirm-type="done" @confirm="confirmFill">
         </view>
       </view>
-    </wd-popup>
-  </view>
+      <view class="ot-mono mt-3 break-all rounded-8px bg-[var(--ot-fill)] p-2 text-12px text-muted">
+        {{ fillSnippet(filling.snippet.command, filling.values) }}
+      </view>
+      <view class="mt-4 flex justify-end gap-2">
+        <wd-button type="info" plain @click="filling = null">
+          取消
+        </wd-button>
+        <wd-button @click="confirmFill">
+          {{ filling.snippet.autoRun ? '执行' : '发送' }}
+        </wd-button>
+      </view>
+    </view>
+  </wd-popup>
 </template>
 
 <style lang="scss" scoped>
@@ -237,5 +299,136 @@ const fillOpen = computed({
   padding: 4px;
   font-size: 14px;
   color: var(--ot-text-3);
+}
+</style>
+
+<style lang="scss" scoped>
+/* 会话底部「命令」标签（仿 FinalShell） */
+.ws-snb {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  font-size: 12px;
+  color: var(--ot-text);
+}
+
+.ws-snb__cats {
+  flex-shrink: 0;
+  width: 140px;
+  padding: 2px 0;
+  overflow: auto;
+  border-right: 1px solid var(--ot-border);
+}
+
+.ws-snb__cat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  cursor: default;
+
+  &:hover {
+    background: var(--ot-fill);
+  }
+
+  &.is-on {
+    color: #fff;
+    background: var(--wot-color-theme);
+  }
+}
+
+.ws-snb__n {
+  margin-left: auto;
+  opacity: 0.6;
+}
+
+.ws-snb__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ws-snb__bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--ot-border);
+}
+
+.ws-snb__search {
+  width: 180px;
+  height: 22px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--ot-border);
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--ot-text);
+  background: var(--ot-card);
+  outline: none;
+}
+
+.ws-snb__btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--ot-border);
+  border-radius: 3px;
+  color: var(--ot-text-2);
+  cursor: pointer;
+
+  &:hover,
+  &.is-on {
+    color: var(--wot-color-theme);
+    border-color: var(--wot-color-theme);
+  }
+}
+
+.ws-snb__list {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.ws-snb__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--ot-border);
+  border-radius: 3px;
+  background: var(--ot-card);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--wot-color-theme);
+    color: var(--wot-color-theme);
+  }
+}
+
+.ws-snb__empty {
+  width: 100%;
+  padding: 16px 0;
+  text-align: center;
+  color: var(--ot-text-3);
+}
+
+.ws-snb__link {
+  margin-left: 6px;
+  color: var(--wot-color-theme);
+  cursor: pointer;
 }
 </style>

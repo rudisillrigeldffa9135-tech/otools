@@ -104,7 +104,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cursorBlink: true,
   scrollback: 5000,
   copyOnSelect: false,
-  rightClickPaste: true,
+  rightClickPaste: false,
   keepalive: 30,
   monitorInterval: 3,
   lockMinutes: 30,
