@@ -8,9 +8,13 @@
 
 /* ---------------- java.util.Random 复刻 ---------------- */
 
-const MASK48 = (1n << 48n) - 1n
-const MUL = 0x5DEECE66Dn
-const ADD = 0xBn
+// 注意：构建目标为 es2015，esbuild 不支持 BigInt 字面量（1n）语法，这里一律用 BigInt() 构造。
+// 运行时 BigInt 本身在现代浏览器都可用，WebShell 仅 H5。
+const B1 = BigInt(1)
+const B32 = BigInt(32)
+const MASK48 = (B1 << BigInt(48)) - B1
+const MUL = BigInt(0x5DEECE66D)
+const ADD = BigInt(0xB)
 
 class JavaRandom {
   private seed: bigint
@@ -36,7 +40,7 @@ class JavaRandom {
   nextLong(): bigint {
     const hi = BigInt(this.next(32))
     const lo = BigInt(this.next(32))
-    return BigInt.asIntN(64, (hi << 32n) + lo)
+    return BigInt.asIntN(64, (hi << B32) + lo)
   }
 }
 
@@ -53,10 +57,11 @@ function md5(bytes: Uint8Array): Uint8Array {
   const padded = new Uint8Array((Math.floor((withOne + 8) / 64) + 1) * 64)
   padded.set(bytes)
   padded[ml] = 0x80
-  const bitLen = BigInt(ml) * 8n
+  const bitLen = BigInt(ml) * BigInt(8)
+  const low32 = BigInt(0xFFFFFFFF)
   const dv = new DataView(padded.buffer)
-  dv.setUint32(padded.length - 8, Number(bitLen & 0xFFFFFFFFn), true)
-  dv.setUint32(padded.length - 4, Number((bitLen >> 32n) & 0xFFFFFFFFn), true)
+  dv.setUint32(padded.length - 8, Number(bitLen & low32), true)
+  dv.setUint32(padded.length - 4, Number((bitLen >> B32) & low32), true)
 
   let a0 = 0x67452301
   let b0 = 0xEFCDAB89 | 0
@@ -213,7 +218,7 @@ function desDecryptEcb(data: Uint8Array, key: Uint8Array): Uint8Array {
 
 function ranDomKey(head: Int8Array): Uint8Array {
   const r0 = new JavaRandom(head[5]).nextInt(127)
-  const ks = 3680984568597093857n / BigInt(r0)
+  const ks = BigInt('3680984568597093857') / BigInt(r0)
   const random = new JavaRandom(ks)
   for (let i = 0; i < head[0]; i++)
     random.nextLong()

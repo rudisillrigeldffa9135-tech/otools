@@ -104,6 +104,18 @@ function closeMany(keys: string[]) {
   }
 }
 
+/**
+ * 中键点击标签关闭会话。
+ * 不用 @mousedown.middle 修饰符：uni-app 的 <view> 不保证把 .middle 守卫作用到合成事件上，
+ * 会导致左键点击也触发关闭。这里直接判断鼠标键（中键 button === 1）。
+ */
+function onTabMouseDown(e: MouseEvent, key: string) {
+  if (e.button === 1) {
+    e.preventDefault()
+    closeTab(key)
+  }
+}
+
 /** 标签右键菜单（仿 FinalShell） */
 function tabMenu(e: MouseEvent, key: string) {
   const i = sessions.findIndex(x => x.key === key)
@@ -224,7 +236,7 @@ onUnload(() => {
         </view>
         <view
           v-for="s in sessions" :key="s.key" class="ws-tab" :class="{ 'is-active': activeKey === s.key }"
-          :title="s.error || s.title" @click="activeKey = s.key" @mousedown.middle.prevent="closeTab(s.key)"
+          :title="s.error || s.title" @click="activeKey = s.key" @mousedown="onTabMouseDown($event, s.key)"
           @contextmenu="tabMenu($event, s.key)"
         >
           <view class="ws-tab__dot" :class="`is-${s.status}`" />
