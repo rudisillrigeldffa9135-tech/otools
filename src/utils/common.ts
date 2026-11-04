@@ -4,6 +4,20 @@ export function toast(title: string, icon: 'none' | 'success' | 'error' = 'none'
   uni.showToast({ title, icon })
 }
 
+/** 删除类操作的二次确认，确认后才执行 action（全站删除操作统一走这里或 uni.showModal） */
+export function confirmDelete(title: string, content: string, action: () => unknown, confirmText = '删除') {
+  uni.showModal({
+    title,
+    content,
+    confirmText,
+    confirmColor: '#ef4444',
+    success: ({ confirm }) => {
+      if (confirm)
+        action()
+    },
+  })
+}
+
 /** 复制到剪贴板（小程序会自动弹出“内容已复制”） */
 export function copyText(text: string) {
   if (!text) {

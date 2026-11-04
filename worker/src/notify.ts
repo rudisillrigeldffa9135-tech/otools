@@ -9,7 +9,7 @@ import { computeNextRemind, decryptAnniv, ruleOf } from './anniversary'
 import { requireUser } from './auth'
 import { decryptJson, encryptJson } from './crypto'
 import { ApiError, now, readJson } from './lib'
-import { sendPush } from './webpush'
+import { isPushServiceUrl, sendPush } from './webpush'
 
 /**
  * 提醒：定时任务把到点的待办提醒、纪念日提醒、里程碑生成站内通知（加密保存），并推送到已订阅的浏览器。
@@ -216,15 +216,8 @@ export async function subscribePush(req: Request, env: Env) {
   const body = await readJson(req)
   const endpoint = typeof body.endpoint === 'string' ? body.endpoint : ''
   // 只接受各浏览器推送服务的 https 地址，避免被用来让服务端去请求任意地址
-  let url: URL
-  try {
-    url = new URL(endpoint)
-  }
-  catch {
-    throw new ApiError(400, '推送地址不正确')
-  }
-  if (url.protocol !== 'https:' || endpoint.length > 1000)
-    throw new ApiError(400, '推送地址不正确')
+  if (endpoint.length > 1000 || !isPushServiceUrl(endpoint))
+    throw new ApiError(400, '推送地址不正确，或当前浏览器的推送服务不受支持')
   const keys = (body.keys ?? {}) as Record<string, unknown>
   const p256dh = b64urlField(keys.p256dh, '公钥', 200)
   const auth = b64urlField(keys.auth, '认证密钥', 100)

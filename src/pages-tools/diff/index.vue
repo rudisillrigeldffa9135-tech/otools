@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type { CollapsedRow, DiffMode, LineRow } from './diff-view'
+import { confirmDelete } from '@/utils/common'
 import { collapseRows, inlineDiff, lineDiff } from './diff-view'
 
 definePage({
@@ -65,8 +66,12 @@ function swap() {
 }
 
 function clear() {
-  left.value = ''
-  right.value = ''
+  if (!left.value && !right.value)
+    return
+  confirmDelete('清空', '清空左右两侧的文本？', () => {
+    left.value = ''
+    right.value = ''
+  }, '清空')
 }
 
 function useSample() {

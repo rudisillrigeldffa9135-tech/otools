@@ -7,18 +7,24 @@ export interface VaultLike {
   username: string
   label: string
   updatedAt: number
+  createdAt?: number
 }
+
+/** 列表排序：name 按网站名称（中文按拼音），created 按添加时间（新的在前）；两种都不受编辑影响，位置固定 */
+export type VaultOrder = 'name' | 'created'
 
 export interface SiteGroup<T extends VaultLike> {
   key: string
-  /** 展示用的网站名称：取最近更新的那条 */
+  /** 展示用的网站名称：取最早添加的那条，编辑其他账号不会改变 */
   name: string
   /** 第一个非空网址 */
   url: string
   host: string
   items: T[]
-  /** 组内最近更新时间，用于排序 */
+  /** 组内最近更新时间 */
   updatedAt: number
+  /** 组内最晚添加时间，按添加时间排序时使用 */
+  createdAt: number
 }
 
 /** 未写协议时补 https:// */
@@ -36,23 +42,28 @@ export function hostOf(url: string) {
 }
 
 const nameKey = (name: string) => name.trim().toLowerCase()
+const createdOf = (item: VaultLike) => item.createdAt ?? item.id
+const lastId = (g: SiteGroup<VaultLike>) => Math.max(...g.items.map(i => i.id))
 
 /**
  * 按网站分组：有网址的按主机名归组（github.com 与 www.github.com 视为同一站点）；
  * 没填网址的条目优先并入同名的站点，否则按名称单独成组。
  */
-export function groupBySite<T extends VaultLike>(items: T[]): SiteGroup<T>[] {
+export function groupBySite<T extends VaultLike>(items: T[], order: VaultOrder = 'name'): SiteGroup<T>[] {
   const groups = new Map<string, SiteGroup<T>>()
   const byName = new Map<string, string>()
-  const sorted = [...items].sort((a, b) => b.updatedAt - a.updatedAt || b.id - a.id)
+  // 组内按添加先后排列，编辑不改变位置
+  const sorted = [...items].sort((a, b) => createdOf(a) - createdOf(b) || a.id - b.id)
 
   const add = (key: string, item: T, host: string) => {
     let g = groups.get(key)
     if (!g) {
-      g = { key, name: item.name, url: '', host, items: [], updatedAt: item.updatedAt }
+      g = { key, name: item.name, url: '', host, items: [], updatedAt: item.updatedAt, createdAt: createdOf(item) }
       groups.set(key, g)
     }
     g.items.push(item)
+    g.updatedAt = Math.max(g.updatedAt, item.updatedAt)
+    g.createdAt = Math.max(g.createdAt, createdOf(item))
     if (!g.url && item.url)
       g.url = item.url
     if (!byName.has(nameKey(item.name)))
@@ -70,7 +81,44 @@ export function groupBySite<T extends VaultLike>(items: T[]): SiteGroup<T>[] {
     add(byName.get(nameKey(item.name)) || `n:${nameKey(item.name)}`, item, '')
   }
 
-  return [...groups.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+  const list = [...groups.values()]
+  return order === 'created'
+    ? list.sort((a, b) => b.createdAt - a.createdAt || lastId(b) - lastId(a))
+    : list.sort((a, b) => compareInitial(initialOf(a.name), initialOf(b.name)) || compareName(a.name, b.name) || a.key.localeCompare(b.key))
+}
+
+const collator = typeof Intl !== 'undefined' ? new Intl.Collator('zh-Hans-CN', { sensitivity: 'base', numeric: true }) : undefined
+
+/** 首字母排序：A–Z 在前，# 在最后 */
+export function compareInitial(a: string, b: string) {
+  return a === b ? 0 : a === '#' ? 1 : b === '#' ? -1 : a < b ? -1 : 1
+}
+
+export function compareName(a: string, b: string) {
+  return collator ? collator.compare(a.trim(), b.trim()) : a.trim().toLowerCase().localeCompare(b.trim().toLowerCase())
+}
+
+// 拼音首字母分界字：按拼音排序时，每个字母的第一个汉字（没有 I、U、V 开头的拼音）
+const PINYIN_BOUNDS = '阿八嚓哒妸发旮哈讥咔垃妈拏噢妑七呥仨他屲夕丫帀'
+const PINYIN_LETTERS = 'ABCDEFGHJKLMNOPQRSTWXYZ'
+/** 运行环境的排序规则是否支持拼音（部分小程序环境不支持，此时汉字归到 #） */
+const pinyinOk = !!collator && collator.compare('阿', '八') < 0 && collator.compare('八', '嚓') < 0 && collator.compare('张', '中') < 0
+
+/** 网站名称的首字母分组：英文取首字母，汉字取拼音首字母，其他归到 # */
+export function initialOf(name: string) {
+  const ch = name.trim().charAt(0)
+  if (/[a-z]/i.test(ch))
+    return ch.toUpperCase()
+  const code = ch.charCodeAt(0)
+  if (!pinyinOk || code < 0x4E00 || code > 0x9FFF)
+    return '#'
+  let letter = '#'
+  for (let i = 0; i < PINYIN_BOUNDS.length; i++) {
+    if (collator!.compare(ch, PINYIN_BOUNDS[i]) < 0)
+      break
+    letter = PINYIN_LETTERS[i]
+  }
+  return letter
 }
 
 /** 是否属于同一网站：主机名相同，或任一方没有网址时名称相同 */

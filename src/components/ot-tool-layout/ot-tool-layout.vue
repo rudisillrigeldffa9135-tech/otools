@@ -22,6 +22,13 @@ onLoad(() => {
 
 const tool = computed(() => getToolByPath(path.value))
 const color = computed(() => (tool.value ? getCategory(tool.value.category).color : ''))
+
+// #ifdef H5
+/** 在新标签页再开一份当前工具，方便多个页面同时操作 */
+function openInNewTab() {
+  window.open(location.href, '_blank', 'noopener')
+}
+// #endif
 </script>
 
 <template>
@@ -38,6 +45,9 @@ const color = computed(() => (tool.value ? getCategory(tool.value.category).colo
           {{ tool.desc }}
         </view>
       </view>
+      <!-- #ifdef H5 -->
+      <view class="i-carbon-launch cursor-pointer p-1 text-20px text-muted hover:text-[var(--wot-color-theme)]" title="在新标签页中打开" @click="openInNewTab" />
+      <!-- #endif -->
       <view
         class="p-1 text-22px"
         :class="toolStore.isFavorite(tool.id) ? 'i-carbon-star-filled text-amber-400' : 'i-carbon-star text-muted'"

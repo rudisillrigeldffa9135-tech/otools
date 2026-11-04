@@ -88,14 +88,13 @@ function onSearchConfirm() {
           最近使用
         </view>
         <ot-hscroll class="mb-2 whitespace-nowrap">
-          <view
-            v-for="tool in toolStore.recents" :key="tool.id"
+          <ot-link
+            v-for="tool in toolStore.recents" :key="tool.id" :to="tool.path"
             class="ot-chip" hover-class="opacity-70"
-            @click="openTool(tool)"
           >
             <view :class="tool.icon" class="text-15px" />
             <text>{{ tool.name }}</text>
-          </view>
+          </ot-link>
         </ot-hscroll>
       </template>
 

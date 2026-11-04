@@ -1,11 +1,25 @@
 import type { Env, Role, SessionUser } from './lib'
 import { hashPassword, randomToken, sha256Hex, verifyPassword } from './crypto'
 import { ApiError, isUniqueViolation, now, password, pbkdf2Iterations, readJson, str, username } from './lib'
+import { assertNotLimited, clientKey, recordFailure } from './ratelimit'
 
 /** 会话有效期 7 天 */
 export const SESSION_TTL = 7 * 24 * 3600
 const MAX_FAILED_LOGINS = 5
 const LOCK_SECONDS = 15 * 60
+/** 同一 IP 15 分钟内最多失败 20 次登录（防止换用户名撞库），修改密码时原密码最多错 5 次 */
+const LOGIN_IP_LIMIT = 20
+const LOGIN_IP_WINDOW = 15 * 60
+const CHANGE_PWD_LIMIT = 5
+/** 同一 IP 每小时最多注册 5 个账号 */
+const REGISTER_IP_LIMIT = 5
+
+function ipKey(req: Request) {
+  return clientKey(req.headers.get('CF-Connecting-IP') || '')
+}
+
+/** 用户不存在时用来空跑一次 PBKDF2，让响应时间与「密码错误」一致 */
+let dummyHash: Promise<string> | undefined
 
 function bearerToken(req: Request) {
   const header = req.headers.get('Authorization') || ''
@@ -93,6 +107,8 @@ export async function setup(req: Request, env: Env) {
 export async function register(req: Request, env: Env) {
   if (env.ALLOW_REGISTER !== 'true')
     throw new ApiError(403, '未开放注册，请联系管理员创建账号')
+  const limitKey = `register:ip:${ipKey(req)}`
+  await assertNotLimited(env, limitKey, REGISTER_IP_LIMIT)
   const body = await readJson(req)
   const input = {
     username: username(body.username),
@@ -104,7 +120,10 @@ export async function register(req: Request, env: Env) {
   if (!(await status(req, env)).initialized)
     throw new ApiError(409, '系统尚未初始化，请先创建管理员')
   try {
-    return createSession(env, await insertUser(env, input))
+    const session = await createSession(env, await insertUser(env, input))
+    // 成功注册也计数：限制的是批量注册
+    await recordFailure(env, limitKey, 3600)
+    return session
   }
   catch (e) {
     if (isUniqueViolation(e))
@@ -114,6 +133,8 @@ export async function register(req: Request, env: Env) {
 }
 
 export async function login(req: Request, env: Env) {
+  const limitKey = `login:ip:${ipKey(req)}`
+  await assertNotLimited(env, limitKey, LOGIN_IP_LIMIT)
   const body = await readJson(req)
   const name = str(body.username, '用户名', { required: true, max: 32 }).trim()
   const pwd = str(body.password, '密码', { required: true, max: 128 })
@@ -122,8 +143,12 @@ export async function login(req: Request, env: Env) {
   ).bind(name).first<{ id: number, password_hash: string, disabled: number, failed_logins: number, locked_until: number }>()
 
   const t = now()
-  if (!user)
+  if (!user) {
+    dummyHash ??= hashPassword('otools-dummy-password', pbkdf2Iterations(env))
+    await verifyPassword(pwd, await dummyHash)
+    await recordFailure(env, limitKey, LOGIN_IP_WINDOW)
     throw new ApiError(400, '用户名或密码错误')
+  }
   if (user.locked_until > t)
     throw new ApiError(429, `密码错误次数过多，请 ${Math.ceil((user.locked_until - t) / 60)} 分钟后再试`)
 
@@ -133,6 +158,7 @@ export async function login(req: Request, env: Env) {
     await env.DB.prepare('UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?')
       .bind(locked ? 0 : fails, locked ? t + LOCK_SECONDS : 0, user.id)
       .run()
+    await recordFailure(env, limitKey, LOGIN_IP_WINDOW)
     throw new ApiError(400, locked ? '密码错误次数过多，账号已锁定 15 分钟' : '用户名或密码错误')
   }
   if (user.disabled)
@@ -162,9 +188,14 @@ export async function changePassword(req: Request, env: Env) {
   const body = await readJson(req)
   const oldPwd = str(body.oldPassword, '原密码', { required: true, max: 128 })
   const newPwd = password(body.newPassword, '新密码')
+  // 会话被盗用时，防止借此穷举原密码
+  const limitKey = `chpwd:user:${user.id}`
+  await assertNotLimited(env, limitKey, CHANGE_PWD_LIMIT)
   const row = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first<{ password_hash: string }>()
-  if (!row || !(await verifyPassword(oldPwd, row.password_hash)))
+  if (!row || !(await verifyPassword(oldPwd, row.password_hash))) {
+    await recordFailure(env, limitKey, LOGIN_IP_WINDOW)
     throw new ApiError(400, '原密码不正确')
+  }
   const currentHash = await sha256Hex(bearerToken(req))
   await env.DB.batch([
     env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?')

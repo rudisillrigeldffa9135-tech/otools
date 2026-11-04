@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { PaletteItem, Pixels, RGBA } from './color'
-import { copyText, toast } from '@/utils/common'
+import { confirmDelete, copyText, toast } from '@/utils/common'
 import { extractPalette, fitSize, isLight, pickColor, toHex, toHsl, toRgb } from './color'
 
 definePage({
@@ -336,7 +336,7 @@ const markerStyle = computed(() => {
 
     <ot-panel v-if="history.length" title="取色记录">
       <template #extra>
-        <wd-button size="small" type="info" plain @click="history = []">
+        <wd-button size="small" type="info" plain @click="confirmDelete('清空取色记录', '删除全部取色记录？', () => (history = []), '清空')">
           清空
         </wd-button>
       </template>

@@ -7,7 +7,7 @@ import { useTokenStore } from '@/store/token'
 import { useToolStore } from '@/store/tool'
 import { useUserStore } from '@/store/user'
 import { tools } from '@/tools/registry'
-import { toast } from '@/utils/common'
+import { confirmDelete, toast } from '@/utils/common'
 import { promptInstall, pwaState } from '@/utils/pwa'
 
 definePage({
@@ -92,8 +92,12 @@ const themeMode = computed({
 })
 
 function clearRecent() {
-  toolStore.clearRecent()
-  toast('已清空', 'success')
+  if (!toolStore.recentIds.length)
+    return
+  confirmDelete('清空最近使用', '清空最近使用的工具记录？', () => {
+    toolStore.clearRecent()
+    toast('已清空', 'success')
+  }, '清空')
 }
 
 /* ---------------- 安装到桌面（H5 / PWA） ---------------- */

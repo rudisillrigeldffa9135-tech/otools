@@ -3,6 +3,7 @@
 import type { ITodo, ITodoForm, ITodoList, ITodoSubtask } from '@/api/todo'
 import type { RepeatRule } from '../repeat'
 import dayjs from 'dayjs'
+import { confirmDelete } from '@/utils/common'
 import { addDays, weekday } from '../../datecalc/date'
 import { colorHex, PRIORITIES, priorityHex, REMIND_OPTIONS, remindLabel } from '../colors'
 import { describeRule } from '../repeat'
@@ -149,12 +150,12 @@ function toggleSubtask(s: ITodoSubtask) {
 function renameSubtask(s: ITodoSubtask, text: string) {
   const v = text.trim()
   if (!v)
-    return removeSubtask(s)
+    return saveSubtasks(props.todo.subtasks.filter(x => x.id !== s.id))
   if (v !== s.text)
     saveSubtasks(props.todo.subtasks.map(x => (x.id === s.id ? { ...x, text: v } : x)))
 }
 function removeSubtask(s: ITodoSubtask) {
-  saveSubtasks(props.todo.subtasks.filter(x => x.id !== s.id))
+  confirmDelete('删除子任务', `删除「${s.text.slice(0, 40)}」？`, () => saveSubtasks(props.todo.subtasks.filter(x => x.id !== s.id)))
 }
 
 const createdText = computed(() => {

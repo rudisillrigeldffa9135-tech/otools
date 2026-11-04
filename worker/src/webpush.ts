@@ -91,6 +91,9 @@ export async function vapidJwt(audience: string, keys: VapidKeys, nowSec = Math.
  * 发送一条推送。返回 'ok'；订阅已失效（404 / 410）返回 'gone'，调用方应删除该订阅；其他失败返回 'error'
  */
 export async function sendPush(target: PushTarget, data: unknown, keys: VapidKeys, ttl = 24 * 3600): Promise<'ok' | 'gone' | 'error'> {
+  // 不在白名单里的旧订阅直接当作失效删除
+  if (!isPushServiceUrl(target.endpoint))
+    return 'gone'
   try {
     const url = new URL(target.endpoint)
     const jwt = await vapidJwt(url.origin, keys)
@@ -118,4 +121,24 @@ export async function sendPush(target: PushTarget, data: unknown, keys: VapidKey
     console.warn('推送异常', e)
     return 'error'
   }
+}
+
+/**
+ * 各浏览器推送服务的域名：Chrome / Edge / Opera 等（FCM、WNS）、Firefox（Mozilla autopush）、Safari（Apple）。
+ * 订阅地址只接受这些域名，避免服务端被用来向任意地址发请求。
+ */
+const PUSH_HOST_SUFFIXES = ['.googleapis.com', '.push.services.mozilla.com', '.notify.windows.com', '.push.apple.com']
+const PUSH_HOSTS = ['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com']
+
+export function isPushServiceUrl(endpoint: string) {
+  let url: URL
+  try {
+    url = new URL(endpoint)
+  }
+  catch {
+    return false
+  }
+  const host = url.hostname.toLowerCase()
+  return url.protocol === 'https:' && !url.port && !url.username && !url.password
+    && (PUSH_HOSTS.includes(host) || PUSH_HOST_SUFFIXES.some(s => host.endsWith(s)))
 }

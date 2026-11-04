@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { b64urlDecode, b64urlEncode, encryptPayload, vapidJwt } from './webpush'
+import { b64urlDecode, b64urlEncode, encryptPayload, isPushServiceUrl, vapidJwt } from './webpush'
 
 const enc = new TextEncoder()
 
@@ -54,5 +54,16 @@ describe('推送签名（VAPID）', () => {
     expect(JSON.parse(new TextDecoder().decode(b64urlDecode(p)))).toEqual({ aud: 'https://fcm.googleapis.com', exp: 1_800_000_000 + 12 * 3600, sub: 'https://otools.example' })
     const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pair.publicKey, b64urlDecode(s), enc.encode(`${h}.${p}`))
     expect(ok).toBe(true)
+  })
+})
+
+describe('isPushServiceUrl 推送地址白名单', () => {
+  it('接受各浏览器推送服务', () => {
+    for (const u of ['https://fcm.googleapis.com/fcm/send/abc', 'https://updates.push.services.mozilla.com/wpush/v2/x', 'https://wns2-sg2p.notify.windows.com/w/?token=1', 'https://web.push.apple.com/abc'])
+      expect(isPushServiceUrl(u)).toBe(true)
+  })
+  it('拒绝其他地址', () => {
+    for (const u of ['https://evil.com/x', 'http://fcm.googleapis.com/x', 'https://fcm.googleapis.com.evil.com/x', 'https://fcm.googleapis.com:8443/x', 'https://a:b@fcm.googleapis.com/x', 'not a url'])
+      expect(isPushServiceUrl(u)).toBe(false)
   })
 })

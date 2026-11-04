@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { Analysis } from './content'
-import { copyText, toast } from '@/utils/common'
+import { confirmDelete, copyText, toast } from '@/utils/common'
 import { analyze } from './content'
 // #ifdef H5
 import jsQR from 'jsqr'
@@ -208,10 +208,12 @@ function openLink(item: Item) {
 }
 
 function remove(item: Item) {
-  items.value = items.value.filter(i => i !== item)
-  // #ifdef H5
-  revokeUrl(item.thumb)
-  // #endif
+  confirmDelete('移除识别结果', '从列表移除这条识别结果？', () => {
+    items.value = items.value.filter(i => i !== item)
+    // #ifdef H5
+    revokeUrl(item.thumb)
+    // #endif
+  }, '移除')
 }
 
 const KIND_ICON: Record<string, string> = {

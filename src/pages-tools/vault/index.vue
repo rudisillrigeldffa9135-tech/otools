@@ -1,11 +1,11 @@
 <script lang="ts" setup>
-import type { SiteGroup } from './utils'
+import type { SiteGroup, VaultOrder } from './utils'
 import type { IVaultForm, IVaultItem, IVaultSummary } from '@/api/vault'
 import dayjs from 'dayjs'
 import { createVaultItem, deleteVaultItem, getVaultItem, listVault, updateVaultItem } from '@/api/vault'
 import { copyText, getRandomInts, toast } from '@/utils/common'
 import { formatCode, parseTotp, totp } from './totp'
-import { findDuplicate, groupBySite, hostOf, matchKeyword, normalizeUrl, passwordStrength } from './utils'
+import { findDuplicate, groupBySite, hostOf, initialOf, matchKeyword, normalizeUrl, passwordStrength } from './utils'
 
 definePage({
   style: { navigationBarTitleText: '密码管理' },
@@ -21,7 +21,33 @@ const revealedIds = reactive(new Set<number>())
 /** 当前展开条目的明细（同一时间只展开一条） */
 const current = computed(() => (expandedId.value ? details.get(expandedId.value) : undefined))
 
-const groups = computed(() => groupBySite(list.value.filter(i => matchKeyword(i, keyword.value))))
+/** 排序方式只影响展示，记在本机；两种排序下编辑账号都不会改变位置 */
+const ORDER_KEY = 'ot-vault-order'
+const order = ref<VaultOrder>(uni.getStorageSync(ORDER_KEY) === 'created' ? 'created' : 'name')
+watch(order, v => uni.setStorageSync(ORDER_KEY, v))
+const ORDER_OPTIONS: { value: VaultOrder, label: string }[] = [
+  { value: 'name', label: '按名称' },
+  { value: 'created', label: '按添加时间' },
+]
+
+const groups = computed(() => groupBySite(list.value.filter(i => matchKeyword(i, keyword.value)), order.value))
+/** 按名称排序时按首字母分段，便于快速定位；按添加时间时不分段 */
+const sections = computed(() => {
+  if (order.value !== 'name')
+    return [{ letter: '', groups: groups.value }]
+  const out: { letter: string, groups: SiteGroup<IVaultSummary>[] }[] = []
+  for (const g of groups.value) {
+    const letter = initialOf(g.name)
+    if (out.at(-1)?.letter !== letter)
+      out.push({ letter, groups: [] })
+    out.at(-1)!.groups.push(g)
+  }
+  return out
+})
+const sectionId = (letter: string) => `ot-vault-sec-${letter === '#' ? 'other' : letter}`
+function jumpTo(letter: string) {
+  uni.pageScrollTo({ selector: `#${sectionId(letter)}`, offsetTop: -12, duration: 0 })
+}
 const siteCount = computed(() => groupBySite(list.value).length)
 
 async function load() {
@@ -51,7 +77,11 @@ onShow(() => {
   nowMs.value = Date.now()
   ticker = setInterval(() => (nowMs.value = Date.now()), 1000)
 })
-onHide(() => clearInterval(ticker))
+onHide(() => {
+  clearInterval(ticker)
+  // 离开页面时重新遮住已显示的密码
+  revealedIds.clear()
+})
 onUnload(() => {
   clearInterval(ticker)
   details.clear()
@@ -307,9 +337,23 @@ function remove(item: IVaultSummary) {
           新增
         </wd-button>
       </view>
-      <view class="mt-2 text-12px text-muted">
-        {{ siteCount }} 个网站 · {{ list.length }} 个账号 · 密码与备注在服务端加密存储，仅本人可查看
-        <text v-if="list.length" class="ml-1 cursor-pointer text-[var(--wot-color-theme)]" @click="toHealth">· 密码体检</text>
+      <view class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-12px text-muted">
+        <text>{{ siteCount }} 个网站 · {{ list.length }} 个账号</text>
+        <text v-if="list.length" class="cursor-pointer text-[var(--wot-color-theme)]" @click="toHealth">密码体检</text>
+        <view class="flex-1" />
+        <view class="ot-vault__seg">
+          <text
+            v-for="o in ORDER_OPTIONS" :key="o.value" class="ot-vault__seg-item"
+            :class="{ 'is-on': order === o.value }" @click="order = o.value"
+          >
+            {{ o.label }}
+          </text>
+        </view>
+      </view>
+      <view v-if="order === 'name' && sections.length > 3" class="ot-vault__index">
+        <text v-for="sec in sections" :key="sec.letter" class="ot-vault__index-item" @click="jumpTo(sec.letter)">
+          {{ sec.letter }}
+        </text>
       </view>
     </ot-panel>
 
@@ -327,102 +371,108 @@ function remove(item: IVaultSummary) {
       </view>
     </ot-panel>
 
-    <view v-for="group in groups" :key="group.key" class="ot-vault__group">
-      <!-- 网站 -->
-      <view class="ot-vault__site">
-        <view class="ot-vault__avatar" :style="{ backgroundColor: avatarColor(group.key) }">
-          {{ group.name.slice(0, 1).toUpperCase() }}
-        </view>
-        <view class="min-w-0 flex-1">
-          <view class="flex items-center gap-1.5">
-            <text class="truncate text-15px text-main font-600">{{ group.name }}</text>
-            <text v-if="group.items.length > 1" class="ot-vault__count">{{ group.items.length }} 个账号</text>
-          </view>
-          <view v-if="group.host || group.url" class="truncate text-12px text-muted">
-            {{ group.host || group.url }}
-          </view>
-        </view>
-        <view v-if="group.url" class="i-carbon-launch ot-vault__btn" title="打开网站" @click="openUrl(group.url)" />
-        <view class="ot-vault__add" @click="openCreate(group)">
-          <view class="i-carbon-add text-15px" />
-          <text>账号</text>
-        </view>
+    <view v-for="sec in sections" :id="sectionId(sec.letter)" :key="sec.letter" class="ot-vault__section">
+      <view v-if="sec.letter" class="ot-vault__letter">
+        {{ sec.letter }}
       </view>
-
-      <!-- 账号 -->
-      <view v-for="item in group.items" :key="item.id" class="ot-vault__account" :class="{ 'is-open': expandedId === item.id }">
-        <view class="flex cursor-pointer items-center gap-2" @click="toggleExpand(item)">
-          <view class="i-carbon-user-avatar shrink-0 text-17px text-muted" />
-          <view class="min-w-0 flex-1">
-            <view class="flex items-center gap-1.5">
-              <text class="truncate text-14px" :class="item.username ? 'text-main' : 'text-muted'">{{ accountTitle(item) }}</text>
-              <text v-if="item.label" class="ot-vault__label-tag">{{ item.label }}</text>
+      <view class="ot-vault__card">
+        <view v-for="group in sec.groups" :key="group.key" class="ot-vault__group">
+          <!-- 网站 -->
+          <view class="ot-vault__site">
+            <view class="ot-vault__avatar" :style="{ backgroundColor: avatarColor(group.key) }">
+              {{ group.name.slice(0, 1).toUpperCase() }}
             </view>
-            <!-- 同组内网站名称不一致时（如「GitHub 工作」）显示出来，便于区分 -->
-            <view v-if="item.name !== group.name" class="truncate text-12px text-muted">
-              {{ item.name }}
+            <view class="min-w-0 flex flex-1 items-baseline gap-2">
+              <text class="max-w-60% shrink-0 truncate text-15px text-main font-600">{{ group.name }}</text>
+              <text v-if="group.host || group.url" class="min-w-0 truncate text-12px text-muted">{{ group.host || group.url }}</text>
+            </view>
+            <view v-if="group.url" class="ot-vault__tool" title="打开网站" @click="openUrl(group.url)">
+              <view class="i-carbon-launch" />
+            </view>
+            <view class="ot-vault__tool" title="在此网站下添加账号" @click="openCreate(group)">
+              <view class="i-carbon-add" />
             </view>
           </view>
-          <view v-if="item.username" class="i-carbon-user-follow ot-vault__btn" title="复制账号" @click.stop="copyText(item.username)" />
-          <view class="i-carbon-password ot-vault__btn" title="复制密码" @click.stop="copyPassword(item.id)" />
-          <view v-if="item.hasTotp" class="i-carbon-time ot-vault__btn" title="复制两步验证码" @click.stop="copyTotp(item.id)" />
-          <view class="shrink-0 text-17px text-muted" :class="expandedId === item.id ? 'i-carbon-chevron-up' : 'i-carbon-chevron-down'" />
-        </view>
 
-        <view v-if="expandedId === item.id" class="mt-3">
-          <view v-if="!current" class="py-3 text-center text-13px text-muted">
-            加载中…
-          </view>
-          <template v-else>
-            <view class="ot-vault__row">
-              <text class="ot-vault__row-label">账号</text>
-              <text class="ot-mono min-w-0 flex-1 break-all" user-select selectable>{{ current.username || '—' }}</text>
-              <view v-if="current.username" class="i-carbon-copy ot-vault__btn" @click="copyText(current.username)" />
-            </view>
-            <view class="ot-vault__row">
-              <text class="ot-vault__row-label">密码</text>
-              <text class="ot-mono min-w-0 flex-1 break-all" user-select selectable>
-                {{ revealedIds.has(item.id) ? (current.password || '—') : (current.password ? '••••••••••' : '—') }}
-              </text>
-              <template v-if="current.password">
-                <view
-                  class="ot-vault__btn" :class="revealedIds.has(item.id) ? 'i-carbon-view-off' : 'i-carbon-view'"
-                  @click="toggleReveal(item.id)"
-                />
-                <view class="i-carbon-copy ot-vault__btn" @click="copyText(current.password)" />
-              </template>
-            </view>
-            <view v-if="current.totp" class="ot-vault__row">
-              <text class="ot-vault__row-label">验证码</text>
-              <template v-if="currentTotp.code">
-                <text class="ot-vault__totp ot-mono" user-select selectable>{{ formatCode(currentTotp.code) }}</text>
-                <view class="ot-vault__countdown" :class="{ 'is-urgent': (currentTotp.remaining || 0) <= 5 }">
-                  <view class="ot-vault__countdown-bar" :style="{ width: `${((currentTotp.remaining || 0) / (currentTotp.period || 30)) * 100}%` }" />
+          <!-- 账号 -->
+          <view v-for="item in group.items" :key="item.id" class="ot-vault__account" :class="{ 'is-open': expandedId === item.id }">
+            <view class="ot-vault__account-head" @click="toggleExpand(item)">
+              <view class="min-w-0 flex flex-1 items-center gap-1.5">
+                <text class="ot-mono truncate text-13px" :class="item.username ? 'text-main' : 'text-muted'">{{ accountTitle(item) }}</text>
+                <text v-if="item.label" class="ot-vault__label-tag">{{ item.label }}</text>
+                <!-- 同组内网站名称不一致时（如「GitHub 工作」）显示出来，便于区分 -->
+                <text v-if="item.name !== group.name" class="min-w-0 truncate text-12px text-muted">{{ item.name }}</text>
+              </view>
+              <!-- 操作按钮固定占位，各行按钮上下对齐 -->
+              <view class="ot-vault__acts">
+                <view class="ot-vault__act" :class="{ 'is-hidden': !item.username }" title="复制账号" @click.stop="item.username && copyText(item.username)">
+                  <view class="i-carbon-user" /><text class="ot-vault__act-text">账号</text>
                 </view>
-                <text class="ot-mono w-24px shrink-0 text-right text-12px text-muted">{{ currentTotp.remaining }}s</text>
-                <view class="i-carbon-copy ot-vault__btn" @click="copyText(currentTotp.code)" />
+                <view class="ot-vault__act" title="复制密码" @click.stop="copyPassword(item.id)">
+                  <view class="i-carbon-password" /><text class="ot-vault__act-text">密码</text>
+                </view>
+                <view class="ot-vault__act" :class="{ 'is-hidden': !item.hasTotp }" title="复制两步验证码" @click.stop="item.hasTotp && copyTotp(item.id)">
+                  <view class="i-carbon-time" /><text class="ot-vault__act-text">验证码</text>
+                </view>
+              </view>
+              <view class="shrink-0 text-15px text-muted" :class="expandedId === item.id ? 'i-carbon-chevron-up' : 'i-carbon-chevron-down'" />
+            </view>
+            <view v-if="expandedId === item.id" class="mt-3">
+              <view v-if="!current" class="py-3 text-center text-13px text-muted">
+                加载中…
+              </view>
+              <template v-else>
+                <view class="ot-vault__row">
+                  <text class="ot-vault__row-label">账号</text>
+                  <text class="ot-mono min-w-0 flex-1 break-all" user-select selectable>{{ current.username || '—' }}</text>
+                  <view v-if="current.username" class="i-carbon-copy ot-vault__btn" @click="copyText(current.username)" />
+                </view>
+                <view class="ot-vault__row">
+                  <text class="ot-vault__row-label">密码</text>
+                  <text class="ot-mono min-w-0 flex-1 break-all" user-select selectable>
+                    {{ revealedIds.has(item.id) ? (current.password || '—') : (current.password ? '••••••••••' : '—') }}
+                  </text>
+                  <template v-if="current.password">
+                    <view
+                      class="ot-vault__btn" :class="revealedIds.has(item.id) ? 'i-carbon-view-off' : 'i-carbon-view'"
+                      @click="toggleReveal(item.id)"
+                    />
+                    <view class="i-carbon-copy ot-vault__btn" @click="copyText(current.password)" />
+                  </template>
+                </view>
+                <view v-if="current.totp" class="ot-vault__row">
+                  <text class="ot-vault__row-label">验证码</text>
+                  <template v-if="currentTotp.code">
+                    <text class="ot-vault__totp ot-mono" user-select selectable>{{ formatCode(currentTotp.code) }}</text>
+                    <view class="ot-vault__countdown" :class="{ 'is-urgent': (currentTotp.remaining || 0) <= 5 }">
+                      <view class="ot-vault__countdown-bar" :style="{ width: `${((currentTotp.remaining || 0) / (currentTotp.period || 30)) * 100}%` }" />
+                    </view>
+                    <text class="ot-mono w-24px shrink-0 text-right text-12px text-muted">{{ currentTotp.remaining }}s</text>
+                    <view class="i-carbon-copy ot-vault__btn" @click="copyText(currentTotp.code)" />
+                  </template>
+                  <text v-else class="min-w-0 flex-1 text-12px text-red-500">{{ currentTotp.error }}</text>
+                </view>
+                <view v-if="current.url" class="ot-vault__row">
+                  <text class="ot-vault__row-label">网址</text>
+                  <text class="min-w-0 flex-1 break-all" user-select selectable>{{ current.url }}</text>
+                  <view class="i-carbon-launch ot-vault__btn" @click="openUrl(current.url)" />
+                </view>
+                <view v-if="current.notes" class="ot-vault__row ot-vault__row--top">
+                  <text class="ot-vault__row-label">备注</text>
+                  <text class="min-w-0 flex-1 whitespace-pre-wrap break-all" user-select selectable>{{ current.notes }}</text>
+                </view>
+                <view class="mt-3 flex items-center gap-2">
+                  <text class="flex-1 text-12px text-muted">更新于 {{ formatTime(item.updatedAt) }}</text>
+                  <wd-button size="small" type="info" plain @click="remove(item)">
+                    删除
+                  </wd-button>
+                  <wd-button size="small" @click="openEdit(item.id)">
+                    编辑
+                  </wd-button>
+                </view>
               </template>
-              <text v-else class="min-w-0 flex-1 text-12px text-red-500">{{ currentTotp.error }}</text>
             </view>
-            <view v-if="current.url" class="ot-vault__row">
-              <text class="ot-vault__row-label">网址</text>
-              <text class="min-w-0 flex-1 break-all" user-select selectable>{{ current.url }}</text>
-              <view class="i-carbon-launch ot-vault__btn" @click="openUrl(current.url)" />
-            </view>
-            <view v-if="current.notes" class="ot-vault__row ot-vault__row--top">
-              <text class="ot-vault__row-label">备注</text>
-              <text class="min-w-0 flex-1 whitespace-pre-wrap break-all" user-select selectable>{{ current.notes }}</text>
-            </view>
-            <view class="mt-3 flex items-center gap-2">
-              <text class="flex-1 text-12px text-muted">更新于 {{ formatTime(item.updatedAt) }}</text>
-              <wd-button size="small" type="info" plain @click="remove(item)">
-                删除
-              </wd-button>
-              <wd-button size="small" @click="openEdit(item.id)">
-                编辑
-              </wd-button>
-            </view>
-          </template>
+          </view>
         </view>
       </view>
     </view>
@@ -562,67 +612,170 @@ function remove(item: IVaultSummary) {
   color: var(--ot-text);
 }
 
-.ot-vault__group {
-  border-radius: 14px;
+.ot-vault__seg {
+  display: flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--ot-fill);
+}
+
+.ot-vault__seg-item {
+  padding: 2px 10px;
+  border-radius: 6px;
+  line-height: 20px;
+  cursor: pointer;
+
+  &.is-on {
+    color: var(--ot-text);
+    background: var(--ot-card);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+}
+
+.ot-vault__index {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.ot-vault__index-item {
+  min-width: 24px;
+  padding: 0 4px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-size: 12px;
+  line-height: 22px;
+  text-align: center;
+  color: var(--ot-text-2);
+  background: var(--ot-fill);
+  cursor: pointer;
+
+  &:hover {
+    color: #fff;
+    background: var(--wot-color-theme);
+  }
+}
+
+.ot-vault__letter {
+  padding: 4px 4px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ot-text-3);
+}
+
+.ot-vault__card {
+  border-radius: 12px;
   background: var(--ot-card);
   border: 1px solid var(--ot-border);
   overflow: hidden;
 }
 
+.ot-vault__group + .ot-vault__group {
+  border-top: 6px solid var(--ot-fill);
+}
+
 .ot-vault__site {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 10px 12px 6px;
 }
 
 .ot-vault__avatar {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   color: #fff;
   font-weight: 600;
-  font-size: 17px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.ot-vault__count {
-  flex-shrink: 0;
-  padding: 0 6px;
-  border-radius: 6px;
-  font-size: 11px;
-  line-height: 18px;
-  color: var(--wot-color-theme);
-  background: rgba(79, 110, 247, 0.1);
-}
-
-.ot-vault__add {
+.ot-vault__tool {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px 10px;
-  border-radius: 8px;
-  font-size: 13px;
-  color: var(--wot-color-theme);
-  background: rgba(79, 110, 247, 0.08);
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  font-size: 16px;
+  color: var(--ot-text-3);
   cursor: pointer;
 
   &:hover {
-    background: rgba(79, 110, 247, 0.16);
+    color: var(--wot-color-theme);
+    background: var(--ot-fill);
   }
 }
 
+/* 账号行与网站名左对齐（头像宽 28 + 间距 10） */
 .ot-vault__account {
-  padding: 10px 16px 10px 20px;
-  border-top: 1px solid var(--ot-border);
+  margin: 0 8px;
+  padding: 0 4px 0 42px;
+  border-radius: 8px;
+
+  &:last-child {
+    margin-bottom: 8px;
+  }
 
   &.is-open {
-    background: color-mix(in srgb, var(--ot-fill) 45%, transparent);
-    padding-bottom: 14px;
+    padding-bottom: 12px;
+    background: var(--ot-fill);
+  }
+}
+
+.ot-vault__account-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.ot-vault__account:not(.is-open):hover {
+  background: color-mix(in srgb, var(--ot-fill) 70%, transparent);
+}
+
+.ot-vault__acts {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.ot-vault__act {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 15px;
+  color: var(--ot-text-3);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--wot-color-theme);
+    background: var(--ot-card);
+  }
+
+  &.is-hidden {
+    visibility: hidden;
+  }
+}
+
+.ot-vault__act-text {
+  display: none;
+  font-size: 12px;
+}
+
+@media (min-width: 768px) {
+  .ot-vault__act-text {
+    display: inline;
   }
 }
 

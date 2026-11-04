@@ -216,7 +216,12 @@ a{display:inline-block;padding:10px 20px;border-radius:10px;background:#4f6ef7;c
 </style></head><body><div class="card"><h1>${title}</h1><p>${message}</p><a href="/">返回首页</a></div></body></html>`
   return new Response(html, {
     status,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'content-security-policy': 'default-src \'none\'; style-src \'unsafe-inline\'; frame-ancestors \'none\'',
+      'x-content-type-options': 'nosniff',
+    },
   })
 }
 

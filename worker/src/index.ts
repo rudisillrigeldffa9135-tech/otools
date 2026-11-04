@@ -174,8 +174,8 @@ async function handleApi(req: Request, env: Env, pathname: string) {
     pathMatched = true
     if (r.method !== req.method)
       continue
-    const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]))
     try {
+      const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]))
       const result = await r.handler(req, env, params)
       // 文件下载等接口直接返回 Response
       return result instanceof Response ? result : ok(result)
@@ -183,6 +183,9 @@ async function handleApi(req: Request, env: Env, pathname: string) {
     catch (e) {
       if (e instanceof ApiError)
         return fail(e.status, e.message)
+      // 路径里的 % 编码不合法
+      if (e instanceof URIError)
+        return fail(400, '请求路径不正确')
       console.error(e)
       return fail(500, '服务器内部错误')
     }

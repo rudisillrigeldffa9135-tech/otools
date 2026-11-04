@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 // 终端下方的命令输入栏（仿 FinalShell）：回车发送，↑ ↓ 翻历史，Esc 清空；历史只保存在本机
-import { toast } from '@/utils/common'
+import { confirmDelete, toast } from '@/utils/common'
 import { openMenu } from '../lib/menu'
 import { broadcast } from '../lib/sessions'
 
@@ -80,13 +80,13 @@ function showHistory(ev: MouseEvent) {
       icon: 'i-carbon-trash-can',
       divider: true,
       danger: true,
-      action: () => {
+      action: () => confirmDelete('清空命令历史', '删除本机保存的全部命令历史？', () => {
         history.value = []
         try {
           localStorage.removeItem(KEY)
         }
         catch {}
-      },
+      }, '清空'),
     },
   ])
 }

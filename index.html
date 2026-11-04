@@ -12,17 +12,8 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="%VITE_APP_TITLE%" />
-    <script>
-      var coverSupport =
-        'CSS' in window &&
-        typeof CSS.supports === 'function' &&
-        (CSS.supports('top: env(a)') || CSS.supports('top: constant(a)'))
-      document.write(
-        '<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0' +
-          (coverSupport ? ', viewport-fit=cover' : '') +
-          '" />',
-      )
-    </script>
+    <!-- 不用内联脚本动态写 viewport：站点开启了 CSP，静态写法在不支持 viewport-fit 的浏览器上会被忽略，效果相同 -->
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, viewport-fit=cover" />
     <title>%VITE_APP_TITLE%</title>
     <!--preload-links-->
     <!--app-context-->

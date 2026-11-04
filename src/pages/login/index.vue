@@ -50,7 +50,9 @@ function goNext() {
 }
 
 onLoad(async (query) => {
-  redirect.value = query?.redirect ? ensureDecodeURIComponent(query.redirect) : ''
+  const target = query?.redirect ? ensureDecodeURIComponent(query.redirect) : ''
+  // 只接受站内页面路径，防止登录后被带到外部地址
+  redirect.value = target.startsWith('/') && !target.startsWith('//') && !target.split('?')[0].includes(':') ? target : ''
   if (isLoggedIn()) {
     goNext()
     return

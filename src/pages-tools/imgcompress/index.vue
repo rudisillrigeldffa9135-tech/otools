@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { OutputFormat, ResizeMode } from './resize'
-import { toast } from '@/utils/common'
+import { confirmDelete, toast } from '@/utils/common'
 import { changePercent, formatBytes, MIME, outputName, resolveFormat, targetSize } from './resize'
 
 definePage({
@@ -387,6 +387,10 @@ watch([format, quality, resizeMode, scale, maxWidth, maxHeight], () => {
 })
 
 function remove(item: Item) {
+  confirmDelete('移除图片', `从列表移除「${item.name}」？`, () => drop(item), '移除')
+}
+
+function drop(item: Item) {
   items.value = items.value.filter(i => i.id !== item.id)
   // #ifdef H5
   revokeUrl(item.src)
@@ -395,7 +399,7 @@ function remove(item: Item) {
 }
 
 function clearAll() {
-  items.value.forEach(remove)
+  confirmDelete('清空列表', `移除全部 ${items.value.length} 张图片？未下载的压缩结果会丢失。`, () => [...items.value].forEach(drop), '清空')
 }
 
 async function downloadAll() {

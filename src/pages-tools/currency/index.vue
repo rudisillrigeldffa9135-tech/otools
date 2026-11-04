@@ -2,7 +2,7 @@
 import type { IRates } from '@/api/lookup'
 import dayjs from 'dayjs'
 import { getRates } from '@/api/lookup'
-import { copyText, toast } from '@/utils/common'
+import { confirmDelete, copyText, toast } from '@/utils/common'
 import { userKey } from '@/utils/user-storage'
 import { convert, currencyName, DEFAULT_FAVORITES, formatAmount } from './currencies'
 
@@ -103,13 +103,17 @@ function addFavorite(e: any) {
 }
 
 function removeFavorite(code: string) {
-  favorites.value = favorites.value.filter(c => c !== code)
-  persist()
+  confirmDelete('移除币种', `从常用列表移除「${currencyName(code)}」？`, () => {
+    favorites.value = favorites.value.filter(c => c !== code)
+    persist()
+  }, '移除')
 }
 
 function resetFavorites() {
-  favorites.value = [...DEFAULT_FAVORITES]
-  persist()
+  confirmDelete('恢复默认', '常用币种列表将恢复为默认，你添加的币种会被移除。', () => {
+    favorites.value = [...DEFAULT_FAVORITES]
+    persist()
+  }, '恢复默认')
 }
 
 const baseIndex = computed(() => Math.max(0, allCodes.value.indexOf(base.value)))

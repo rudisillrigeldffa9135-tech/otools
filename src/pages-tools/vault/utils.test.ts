@@ -1,5 +1,5 @@
 import type { VaultLike } from './utils'
-import { findDuplicate, groupBySite, hostOf, matchKeyword, passwordStrength } from './utils'
+import { findDuplicate, groupBySite, hostOf, initialOf, matchKeyword, passwordStrength } from './utils'
 
 let seq = 0
 function item(name: string, url: string, username = '', extra: Partial<VaultLike> = {}): VaultLike {
@@ -39,15 +39,40 @@ describe('groupBySite 按网站分组', () => {
     expect(groups.map(g => g.items.length).sort()).toEqual([1, 2])
   })
 
-  it('组按最近更新排序，组内同样按更新时间倒序', () => {
+  it('默认按名称首字母排序（汉字按拼音），编辑不改变位置', () => {
     const groups = groupBySite([
-      item('A', 'a.com', 'old', { updatedAt: 1 }),
-      item('B', 'b.com', 'x', { updatedAt: 5 }),
-      item('A', 'a.com', 'new', { updatedAt: 9 }),
+      item('腾讯云', 'cloud.tencent.com', 'x', { updatedAt: 99 }),
+      item('GitHub', 'github.com', 'a'),
+      item('阿里云', 'aliyun.com', 'b'),
+      item('12306', '12306.cn', 'c'),
+      item('Apple', 'apple.com', 'd'),
     ])
-    expect(groups.map(g => g.host)).toEqual(['a.com', 'b.com'])
-    expect(groups[0].items.map(i => i.username)).toEqual(['new', 'old'])
-    expect(groups[0].updatedAt).toBe(9)
+    expect(groups.map(g => g.name)).toEqual(['阿里云', 'Apple', 'GitHub', '腾讯云', '12306'])
+  })
+
+  it('组内按添加先后排列，组名取最早添加的那条', () => {
+    const groups = groupBySite([
+      item('A', 'a.com', 'new', { createdAt: 9, updatedAt: 1 }),
+      item('A 旧名', 'a.com', 'old', { createdAt: 1, updatedAt: 50 }),
+    ])
+    expect(groups[0].items.map(i => i.username)).toEqual(['old', 'new'])
+    expect(groups[0].name).toBe('A 旧名')
+    expect(groups[0].updatedAt).toBe(50)
+  })
+
+  it('按添加时间排序：最近添加的网站在前', () => {
+    const groups = groupBySite([
+      item('A', 'a.com', 'x', { createdAt: 1 }),
+      item('B', 'b.com', 'x', { createdAt: 5 }),
+      item('A', 'a.com', 'y', { createdAt: 3 }),
+    ], 'created')
+    expect(groups.map(g => g.host)).toEqual(['b.com', 'a.com'])
+  })
+})
+
+describe('initialOf 首字母', () => {
+  it('英文取首字母，汉字取拼音首字母，其他归到 #', () => {
+    expect(['github', '阿里云', '百度', '中国银行', '微信', '12306', '·x'].map(initialOf)).toEqual(['G', 'A', 'B', 'Z', 'W', '#', '#'])
   })
 })
 

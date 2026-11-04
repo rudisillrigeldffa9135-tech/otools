@@ -238,8 +238,14 @@ export async function rawPaste(req: Request, env: Env, value: string) {
   try {
     const code = normalizeCode(value)
     if (req.method === 'HEAD') {
+      // 同样计入猜错限流，否则 HEAD 可以无限次探测取件码是否存在
+      const limitKey = `paste:ip:${clientKey(req.headers.get('CF-Connecting-IP') || '')}`
+      await assertNotLimited(env, limitKey, PICKUP_LIMIT_ANONYMOUS)
       const row = await env.DB.prepare('SELECT * FROM pastes WHERE code = ?').bind(code).first<PasteRow>()
-      return textResponse(null, row && !isExpired(row) ? 200 : 404)
+      const found = !!row && !isExpired(row)
+      if (!found)
+        await recordFailure(env, limitKey, PICKUP_WINDOW)
+      return textResponse(null, found ? 200 : 404)
     }
     const result = await pickup(req, env, code, null)
     return textResponse(result.content)

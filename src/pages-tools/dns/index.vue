@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { DnsResolver, IDnsLookup } from '@/api/dns'
 import { dnsLookup } from '@/api/dns'
-import { copyText, toast } from '@/utils/common'
+import { confirmDelete, copyText, toast } from '@/utils/common'
 import { userKey } from '@/utils/user-storage'
 
 definePage({
@@ -85,11 +85,13 @@ function saveHistory(n: string) {
 }
 
 function clearHistory() {
-  history.value = []
-  try {
-    uni.removeStorageSync(userKey(HISTORY_KEY))
-  }
-  catch {}
+  confirmDelete('清空查询记录', '删除全部 DNS 查询记录？', () => {
+    history.value = []
+    try {
+      uni.removeStorageSync(userKey(HISTORY_KEY))
+    }
+    catch {}
+  }, '清空')
 }
 
 async function runQuery() {

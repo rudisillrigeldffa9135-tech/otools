@@ -36,6 +36,7 @@ import vitePluginEruda from './scripts/vite-plugin-eruda'
 import { createCopyNativeResourcesPlugin } from './vite-plugins/copy-native-resources'
 import syncManifestPlugin from './vite-plugins/sync-manifest-plugins'
 import pwaPlugin from './vite-plugins/pwa'
+import securityHeadersPlugin from './vite-plugins/security-headers'
 import toolMetasPlugin from './vite-plugins/tool-metas'
 import webshellWasmPlugin from './vite-plugins/webshell-wasm'
 
@@ -158,6 +159,8 @@ export default defineConfig(({ command, mode }) => {
       }),
       // WebShell 的浏览器端 SSH 客户端（Go 编译的 WebAssembly），仅 H5
       UNI_PLATFORM === 'h5' && webshellWasmPlugin({ base: VITE_APP_PUBLIC_BASE }),
+      // h5 安全响应头（CSP、防 iframe 嵌入等），生成 Cloudflare 静态资源的 _headers
+      UNI_PLATFORM === 'h5' && securityHeadersPlugin(),
       // 打包分析插件，h5 + 生产环境才弹出
       UNI_PLATFORM === 'h5'
       && mode === 'production'

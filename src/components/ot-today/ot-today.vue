@@ -72,24 +72,24 @@ defineExpose({ refresh })
 
 <template>
   <view v-if="data" class="ot-today">
-    <view v-if="data.unread" class="ot-today__unread" @click="open('/pages/notify/index')">
+    <ot-link v-if="data.unread" to="/pages/notify/index" class="ot-today__unread">
       <view class="i-carbon-notification-new text-16px" />
       <text class="flex-1">{{ data.unread }} 条未读提醒</text>
       <view class="i-carbon-chevron-right" />
-    </view>
+    </ot-link>
 
     <view class="ot-today__grid">
       <!-- 今日待办 -->
       <view class="ot-today__card">
-        <view class="ot-today__head" @click="open('/pages-tools/todo/index')">
+        <ot-link to="/pages-tools/todo/index" class="ot-today__head">
           <view class="i-carbon-task text-17px text-[var(--wot-color-theme)]" />
           <text class="flex-1 font-600">今日待办</text>
           <text class="text-12px text-muted">{{ remaining > 0 ? `${remaining} 项` : '' }}</text>
           <view class="i-carbon-chevron-right text-muted" />
-        </view>
-        <view v-if="!data.todos.length" class="ot-today__empty" @click="open('/pages-tools/todo/index')">
+        </ot-link>
+        <ot-link v-if="!data.todos.length" to="/pages-tools/todo/index" class="ot-today__empty">
           今天没有待办 · 去添加
-        </view>
+        </ot-link>
         <view v-for="t in data.todos.slice(0, 5)" :key="t.id" class="ot-today__todo" :class="{ 'is-done': doneIds.has(t.id) }">
           <view
             class="ot-today__check" :style="{ borderColor: PRIORITY_HEX[t.priority], background: doneIds.has(t.id) ? PRIORITY_HEX[t.priority] : '' }"
@@ -100,22 +100,22 @@ defineExpose({ refresh })
           <text class="min-w-0 flex-1 truncate" @click="open('/pages-tools/todo/index')">{{ t.title }}</text>
           <text class="shrink-0 text-12px" :class="t.overdue ? 'text-red-500' : 'text-muted'">{{ t.overdue ? '逾期' : t.dueTime || '今天' }}</text>
         </view>
-        <view v-if="data.todoCount > 5" class="ot-today__more" @click="open('/pages-tools/todo/index')">
+        <ot-link v-if="data.todoCount > 5" to="/pages-tools/todo/index" class="ot-today__more">
           还有 {{ data.todoCount - 5 }} 项
-        </view>
+        </ot-link>
       </view>
 
       <!-- 纪念日 -->
       <view class="ot-today__card">
-        <view class="ot-today__head" @click="open('/pages-tools/anniversary/index')">
+        <ot-link to="/pages-tools/anniversary/index" class="ot-today__head">
           <view class="i-carbon-favorite text-17px text-[#ec4899]" />
           <text class="flex-1 font-600">纪念日</text>
           <view class="i-carbon-chevron-right text-muted" />
-        </view>
-        <view v-if="!data.anniversaries.length" class="ot-today__empty" @click="open('/pages-tools/anniversary/index')">
+        </ot-link>
+        <ot-link v-if="!data.anniversaries.length" to="/pages-tools/anniversary/index" class="ot-today__empty">
           最近 30 天没有纪念日 · 去添加
-        </view>
-        <view v-for="a in data.anniversaries.slice(0, 4)" :key="a.id" class="ot-today__ann" @click="open('/pages-tools/anniversary/index')">
+        </ot-link>
+        <ot-link v-for="a in data.anniversaries.slice(0, 4)" :key="a.id" to="/pages-tools/anniversary/index" class="ot-today__ann">
           <view class="ot-today__emoji" :style="{ background: GRADIENTS[a.color] ?? GRADIENTS[''] }">
             {{ a.emoji || '📌' }}
           </view>
@@ -126,7 +126,7 @@ defineExpose({ refresh })
           <text class="shrink-0 text-13px font-600" :class="a.kind === 'today' ? 'text-red-500' : a.kind === 'countdown' ? 'text-[var(--wot-color-theme)]' : 'text-orange-500'">
             {{ dayText(a) }}
           </text>
-        </view>
+        </ot-link>
       </view>
     </view>
   </view>
@@ -180,6 +180,7 @@ defineExpose({ refresh })
 }
 
 .ot-today__empty {
+  display: block;
   padding: 10px 0 4px;
   font-size: 13px;
   color: var(--ot-text-3);
@@ -212,6 +213,7 @@ defineExpose({ refresh })
 }
 
 .ot-today__more {
+  display: block;
   padding-top: 4px;
   font-size: 12px;
   color: var(--wot-color-theme);

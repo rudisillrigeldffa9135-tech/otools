@@ -2,16 +2,21 @@
 import type { Tool } from '@/tools/types'
 import { useToolStore } from '@/store/tool'
 import { getCategory } from '@/tools/categories'
-import { openTool } from '@/tools/registry'
 
 const props = defineProps<{ tool: Tool }>()
 
 const toolStore = useToolStore()
 const color = computed(() => getCategory(props.tool.category).color)
+
+/** 收藏按钮在链接内，H5 需阻止链接跳转 */
+function toggleFav(e?: Event) {
+  e?.preventDefault?.()
+  toolStore.toggleFavorite(props.tool.id)
+}
 </script>
 
 <template>
-  <view class="ot-tool-card" hover-class="is-hover" @click="openTool(tool)">
+  <ot-link :to="tool.path" class="ot-tool-card" hover-class="is-hover">
     <view class="flex items-start justify-between">
       <view class="ot-tool-card__icon" :style="{ color, backgroundColor: `${color}1a` }">
         <view :class="tool.icon" class="text-20px" />
@@ -19,7 +24,7 @@ const color = computed(() => getCategory(props.tool.category).color)
       <view
         class="ot-tool-card__fav"
         :class="toolStore.isFavorite(tool.id) ? 'i-carbon-star-filled text-amber-400' : 'i-carbon-star text-muted'"
-        @click.stop="toolStore.toggleFavorite(tool.id)"
+        @click.stop="toggleFav"
       />
     </view>
     <view class="mt-3 flex items-center gap-1">
@@ -29,11 +34,12 @@ const color = computed(() => getCategory(props.tool.category).color)
     <view class="ot-ellipsis-2 mt-1 text-12px text-muted leading-18px">
       {{ tool.desc }}
     </view>
-  </view>
+  </ot-link>
 </template>
 
 <style lang="scss" scoped>
 .ot-tool-card {
+  display: block;
   box-sizing: border-box;
   height: 100%;
   padding: 14px;

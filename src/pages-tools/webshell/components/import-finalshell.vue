@@ -51,7 +51,7 @@ function pick(directory: boolean) {
   if (directory)
     el.setAttribute('webkitdirectory', '')
   el.accept = directory ? '' : '.json,application/json'
-  el.onchange = () => readFiles([...(el.files ?? [])])
+  el.onchange = () => readFiles(Array.from(el.files ?? []))
   el.click()
 }
 
