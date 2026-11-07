@@ -751,10 +751,7 @@ const activeHeading = ref(-1)
 watch(showOutline, v => writePref(OUTLINE_KEY, v))
 
 function toggleOutline() {
-  if (wide.value || fullscreen.value)
-    showOutline.value = !showOutline.value
-  else
-    outlinePopup.value = true
+  showOutline.value = !showOutline.value
 }
 
 function updateActiveHeading() {
@@ -1064,7 +1061,7 @@ const showList = computed(() => wide.value || !current.value)
             重试
           </view>
           <view
-            class="ot-notes__icon-btn" :class="{ 'is-on': showOutline && (wide || fullscreen) }" title="大纲"
+            class="ot-notes__icon-btn" :class="{ 'is-on': showOutline }" title="大纲"
             @click="toggleOutline"
           >
             <view class="i-carbon-list-dropdown" />
@@ -1085,6 +1082,21 @@ const showList = computed(() => wide.value || !current.value)
           </view>
         </view>
 
+        <!-- 屏幕右上方大纲浮窗 -->
+        <view v-if="showOutline" class="ot-notes__outline-panel">
+          <view class="ot-notes__outline-panel-head">
+            <view class="flex items-center gap-1.5 text-13px text-main font-600">
+              <view class="i-carbon-list-dropdown text-14px" />
+              <text>大纲</text>
+              <text v-if="outline.length" class="text-11px text-muted font-normal">({{ outline.length }})</text>
+            </view>
+            <view class="i-carbon-close cursor-pointer p-0.5 text-15px text-muted hover:text-main" title="关闭大纲" @click="showOutline = false" />
+          </view>
+          <scroll-view scroll-y class="ot-notes__outline-panel-body">
+            <note-outline :items="outline" :active="activeHeading" @jump="jumpTo" />
+          </scroll-view>
+        </view>
+
         <view v-if="conflict" class="ot-notes__banner is-warn">
           <view class="i-carbon-warning-alt shrink-0 text-16px" />
           <text class="min-w-0 flex-1">这条便签已在其他设备上修改过，自动保存已暂停。</text>
@@ -1099,9 +1111,6 @@ const showList = computed(() => wide.value || !current.value)
         </view>
 
         <view class="ot-notes__body" :class="`is-${mode}`">
-          <scroll-view v-if="showOutline && (wide || fullscreen)" scroll-y class="ot-notes__outline">
-            <note-outline :items="outline" :active="activeHeading" @jump="jumpTo" />
-          </scroll-view>
           <view v-if="mode !== 'preview'" class="ot-notes__editor">
             <!-- #ifdef H5 -->
             <h5-textarea
@@ -1384,7 +1393,10 @@ const showList = computed(() => wide.value || !current.value)
     position: fixed;
     inset: 0;
     z-index: 900;
-    padding: 12px max(16px, calc((100vw - 1400px) / 2)) 16px;
+    width: 100vw;
+    height: 100vh;
+    box-sizing: border-box;
+    padding: 12px 16px 16px;
     padding-top: calc(12px + env(safe-area-inset-top));
     padding-bottom: calc(16px + env(safe-area-inset-bottom));
     border: none;
@@ -1420,19 +1432,47 @@ const showList = computed(() => wide.value || !current.value)
   color: var(--ot-text);
 }
 
-.ot-notes__outline {
-  box-sizing: border-box;
-  flex: 0 0 190px;
-  height: 60vh;
-  min-height: 320px;
-  padding: 6px;
-  border-radius: 10px;
+.ot-notes__outline-panel {
+  position: fixed;
+  top: 72px;
+  right: 20px;
+  width: 260px;
+  max-width: calc(100vw - 32px);
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--ot-card);
   border: 1px solid var(--ot-border);
+  border-radius: 12px;
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.15),
+    0 0 0 1px var(--ot-border);
+  z-index: 850;
+  overflow: hidden;
+  backdrop-filter: blur(8px);
 
   .is-fullscreen & {
-    height: 100%;
-    min-height: 0;
+    top: 56px;
+    right: 20px;
+    z-index: 950;
   }
+}
+
+.ot-notes__outline-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ot-border);
+  background: var(--ot-fill);
+}
+
+.ot-notes__outline-panel-body {
+  flex: 1;
+  min-height: 0;
+  max-height: 440px;
+  padding: 8px;
+  box-sizing: border-box;
 }
 
 .ot-notes__outline-popup {

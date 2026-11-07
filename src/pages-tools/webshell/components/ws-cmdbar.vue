@@ -143,6 +143,8 @@ function showHistory(ev: MouseEvent) {
   gap: 3px;
   height: 22px;
   padding: 0 8px;
+  box-sizing: border-box;
+  white-space: nowrap;
   border: 1px solid var(--ot-border);
   border-radius: 3px;
   font-size: 12px;

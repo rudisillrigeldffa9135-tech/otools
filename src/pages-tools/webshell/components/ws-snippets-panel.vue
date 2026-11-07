@@ -116,9 +116,14 @@ const fillOpen = computed({
     <div class="ws-snb__main">
       <div class="ws-snb__bar">
         <input v-model="keyword" class="ws-snb__search" placeholder="搜索命令">
-        <span class="ws-snb__btn" title="新建快捷命令" @click="edit(null)"><span class="i-carbon-add" />新建</span>
+        <span class="ws-snb__btn" title="新建快捷命令" @click="edit(null)">
+          <span class="i-carbon-add shrink-0" />
+          <span>新建</span>
+        </span>
         <span class="ws-snb__btn" :class="{ 'is-on': toAll }" title="发送到所有已连接的会话" @click="toAll = !toAll">
-          <span class="i-carbon-share-knowledge" />全部会话（{{ connectedCount }}）
+          <span class="i-carbon-share-knowledge shrink-0" />
+          <span class="ws-snb__btn-text-full">全部会话（{{ connectedCount }}）</span>
+          <span class="ws-snb__btn-text-short">全会话({{ connectedCount }})</span>
         </span>
       </div>
       <div class="ws-snb__list">
@@ -318,6 +323,10 @@ const fillOpen = computed({
   padding: 2px 0;
   overflow: auto;
   border-right: 1px solid var(--ot-border);
+
+  @media (max-width: 640px) {
+    width: 80px;
+  }
 }
 
 .ws-snb__cat {
@@ -327,6 +336,11 @@ const fillOpen = computed({
   height: 24px;
   padding: 0 10px;
   cursor: default;
+
+  @media (max-width: 640px) {
+    padding: 0 6px;
+    font-size: 11px;
+  }
 
   &:hover {
     background: var(--ot-fill);
@@ -358,10 +372,18 @@ const fillOpen = computed({
   height: 30px;
   padding: 0 4px;
   border-bottom: 1px solid var(--ot-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .ws-snb__search {
-  width: 180px;
+  flex: 1;
+  min-width: 48px;
+  max-width: 180px;
   height: 22px;
   padding: 0 6px;
   box-sizing: border-box;
@@ -371,23 +393,50 @@ const fillOpen = computed({
   color: var(--ot-text);
   background: var(--ot-card);
   outline: none;
+
+  @media (max-width: 480px) {
+    min-width: 40px;
+    font-size: 11px;
+  }
 }
 
 .ws-snb__btn {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 3px;
   height: 22px;
   padding: 0 8px;
+  box-sizing: border-box;
+  white-space: nowrap;
   border: 1px solid var(--ot-border);
   border-radius: 3px;
   color: var(--ot-text-2);
   cursor: pointer;
 
+  @media (max-width: 640px) {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+
   &:hover,
   &.is-on {
     color: var(--wot-color-theme);
     border-color: var(--wot-color-theme);
+  }
+}
+
+.ws-snb__btn-text-short {
+  display: none;
+}
+
+@media (max-width: 520px) {
+  .ws-snb__btn-text-full {
+    display: none;
+  }
+
+  .ws-snb__btn-text-short {
+    display: inline;
   }
 }
 
