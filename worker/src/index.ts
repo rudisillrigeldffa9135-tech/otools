@@ -24,6 +24,7 @@ import * as shortlink from './shortlink'
 import * as todo from './todo'
 import * as vault from './vault'
 import * as webshell from './webshell'
+import * as whereis from './whereis'
 import * as whois from './whois'
 
 export { WebShellRelay } from './webshell-relay'
@@ -147,6 +148,18 @@ route('POST', '/api/webshell/ticket', webshell.createTicket)
 route('GET', '/api/webshell/relay', webshell.relay)
 route('POST', '/api/webshell/probe', webshell.probe)
 route('GET', '/api/webshell/sessions', webshell.listSessions)
+
+// 归属查询
+route('GET', '/api/whereis/overview', whereis.overview)
+route('POST', '/api/whereis/subjects', whereis.createSubject)
+route('PUT', '/api/whereis/subjects/:id', whereis.updateSubject)
+route('DELETE', '/api/whereis/subjects/:id', whereis.deleteSubject)
+route('POST', '/api/whereis/accounts', whereis.createAccount)
+route('PUT', '/api/whereis/accounts/:id', whereis.updateAccount)
+route('DELETE', '/api/whereis/accounts/:id', whereis.deleteAccount)
+route('POST', '/api/whereis/assets', whereis.createAsset)
+route('PUT', '/api/whereis/assets/:id', whereis.updateAsset)
+route('DELETE', '/api/whereis/assets/:id', whereis.deleteAsset)
 
 route('GET', '/api/ip', network.myIp)
 route('GET', '/api/dns', dns.lookup)
