@@ -151,11 +151,15 @@ export function loadSsh(): Promise<OtSsh> {
 
 const PING_INTERVAL = 20_000
 
-/** 经 Worker 中转打开到 host:port 的 TCP 通道 */
-async function openRelay(ssh: OtSsh, host: string, port: number) {
+/**
+ * 经 Worker 中转打开到服务器的通道：直连为 TCP host:port；Cloudflare Tunnel 为 Tunnel 域名。
+ * Tunnel 的服务令牌不放进票据（票据会写入数据库），而是 WebSocket 建立后作为第一条消息直接发给中转，只存在于内存
+ */
+async function openRelay(ssh: OtSsh, host: Host) {
+  const tunnel = host.via === 'cftunnel'
   let ticket: string
   try {
-    ticket = (await createWebshellTicket(host, port)).ticket
+    ticket = (await createWebshellTicket(host.host, host.port || 22, tunnel ? 'cftunnel' : '')).ticket
   }
   catch (e: any) {
     throw new SshError(e?.message || '无法建立连接', e?.statusCode === 429 ? 'limit' : 'ticket')
@@ -163,6 +167,15 @@ async function openRelay(ssh: OtSsh, host: string, port: number) {
   const url = absoluteApiUrl(`/api/webshell/relay?t=${encodeURIComponent(ticket)}`).replace(/^http/, 'ws')
   const ws = new WebSocket(url)
   ws.binaryType = 'arraybuffer'
+  if (tunnel) {
+    ws.addEventListener('open', () => {
+      const id = host.cfClientId?.trim()
+      const secret = host.cfClientSecret?.trim()
+      // 没填令牌也发一条，中转据此立即连接（而不是等待超时）
+      ws.send(JSON.stringify(id && secret ? { t: 'auth', id, secret } : { t: 'auth' }))
+    }, { once: true })
+  }
+  let unprotected = false
   const transport = ssh.createTransport(
     (d) => {
       if (ws.readyState === WebSocket.OPEN)
@@ -193,6 +206,7 @@ async function openRelay(ssh: OtSsh, host: string, port: number) {
         const m = JSON.parse(e.data)
         if (m.t === 'open') {
           clearTimeout(timer)
+          unprotected = !!m.unprotected
           resolve()
         }
         else if (m.t === 'error') {
@@ -213,7 +227,7 @@ async function openRelay(ssh: OtSsh, host: string, port: number) {
     if (ws.readyState === WebSocket.OPEN)
       ws.send('{"t":"ping"}')
   }, PING_INTERVAL)
-  return { transportId: transport.id, close: () => ws.close(), closed }
+  return { transportId: transport.id, close: () => ws.close(), closed, unprotected }
 }
 
 /* ---------------- 连接 ---------------- */
@@ -272,8 +286,12 @@ export async function connectHost(host: Host, deps: ConnectDeps, depth = 0, seen
     deps.onStatus?.(`经跳板机连接 ${host.name || host.host}…`)
   }
   else {
-    deps.onStatus?.('正在建立连接…')
-    relay = await openRelay(ssh, host.host, host.port || 22)
+    deps.onStatus?.(host.via === 'cftunnel' ? '正在连接 Cloudflare Tunnel…' : '正在建立连接…')
+    relay = await openRelay(ssh, host)
+    if (relay.unprotected) {
+      const esc = String.fromCharCode(27)
+      deps.onBanner?.(`${esc}[33m注意：Tunnel 域名 ${host.host} 未受 Cloudflare Access 保护，任何人都能连到这台服务器的 SSH 端口。建议配置 Access 并在服务器设置中填写服务令牌。${esc}[0m${String.fromCharCode(13, 10)}`)
+    }
     deps.onStatus?.('正在进行 SSH 握手…')
   }
 

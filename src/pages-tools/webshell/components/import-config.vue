@@ -58,9 +58,14 @@ async function submit() {
         name: h.alias,
         host: h.host,
         port: h.port,
+        via: h.tunnel ? 'cftunnel' : 'direct',
         username: h.username || 'root',
         auth: h.identityFile ? 'key' : 'password',
-        note: h.identityFile ? `导入自 SSH 配置，需要私钥 ${h.identityFile}` : '导入自 SSH 配置',
+        note: [
+          '导入自 SSH 配置',
+          h.identityFile ? `需要私钥 ${h.identityFile}` : '',
+          h.tunnel ? '经 Cloudflare Tunnel，如域名受 Access 保护请在编辑中填写服务令牌' : '',
+        ].filter(Boolean).join('，'),
         createdAt: now,
       })
       ids.set(h.alias, saved.id)
@@ -95,7 +100,7 @@ async function submit() {
         <view class="i-carbon-close cursor-pointer text-18px text-muted" @click="open = false" />
       </view>
       <view class="text-12px text-muted leading-18px">
-        粘贴 ~/.ssh/config 的内容（Windows 在 C:\Users\你的用户名\.ssh\config），支持 Host、HostName、Port、User、IdentityFile、ProxyJump。
+        粘贴 ~/.ssh/config 的内容（Windows 在 C:\Users\你的用户名\.ssh\config），支持 Host、HostName、Port、User、IdentityFile、ProxyJump，以及 ProxyCommand cloudflared access ssh（识别为 Cloudflare Tunnel）。
       </view>
       <view class="ws-form__label flex items-center">
         <text class="flex-1">配置内容</text>
@@ -116,7 +121,7 @@ async function submit() {
                 {{ h.alias }}
               </view>
               <view class="ot-mono truncate text-11px text-muted">
-                {{ h.username || 'root' }}@{{ h.host }}:{{ h.port }}{{ h.proxyJump ? ` · 经 ${h.proxyJump}` : '' }}{{ h.identityFile ? ` · 私钥 ${h.identityFile}` : '' }}
+                {{ h.username || 'root' }}@{{ h.host }}{{ h.tunnel ? '（Cloudflare Tunnel）' : `:${h.port}` }}{{ h.proxyJump ? ` · 经 ${h.proxyJump}` : '' }}{{ h.identityFile ? ` · 私钥 ${h.identityFile}` : '' }}
               </view>
             </view>
           </view>

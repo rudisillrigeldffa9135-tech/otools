@@ -23,7 +23,7 @@ const emit = defineEmits<{
 
 const keyword = ref('')
 const collapsed = ref(new Set<string>())
-const probes = reactive(new Map<string, { ok: boolean, ms?: number, error?: string }>())
+const probes = reactive(new Map<string, { ok: boolean, ms?: number, error?: string, note?: string }>())
 const probing = ref(false)
 let probeTimer: ReturnType<typeof setInterval> | undefined
 
@@ -45,14 +45,14 @@ const recent = computed(() => data.hosts.filter(h => h.lastConnectedAt).sort((a,
 const onlineCount = computed(() => data.hosts.filter(h => probes.get(h.id)?.ok).length)
 const probed = computed(() => data.hosts.filter(h => probes.has(h.id)).length)
 
-/** 只检测直连的服务器（经跳板机的无法从外部检测） */
+/** 只检测直连与 Cloudflare Tunnel 的服务器（经跳板机的无法从外部检测） */
 async function probe() {
   const targets = data.hosts.filter(h => !h.jumpHostId).slice(0, 30)
   if (!targets.length || probing.value)
     return
   probing.value = true
   try {
-    const res = await probeWebshellHosts(targets.map(h => ({ host: h.host, port: h.port || 22 })))
+    const res = await probeWebshellHosts(targets.map(h => ({ host: h.host, port: h.port || 22, via: h.via === 'cftunnel' ? 'cftunnel' as const : '' as const })))
     targets.forEach((h, i) => res[i] && probes.set(h.id, res[i]))
   }
   catch {}
@@ -80,7 +80,7 @@ function status(h: Host) {
   const p = probes.get(h.id)
   if (!p)
     return { cls: '', text: '未检测' }
-  return p.ok ? { cls: 'is-ok', text: `${p.ms} ms` } : { cls: 'is-down', text: '无法连接', title: p.error }
+  return p.ok ? { cls: 'is-ok', text: `${p.ms} ms`, title: p.note } : { cls: 'is-down', text: '无法连接', title: p.error }
 }
 
 function sessionsOf(h: Host) {

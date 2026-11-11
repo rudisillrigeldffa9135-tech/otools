@@ -11,6 +11,22 @@ export interface ImportedHost {
   identityFile: string
   /** ProxyJump 指向的别名（只取第一跳） */
   proxyJump: string
+  /** ProxyCommand 为 cloudflared access ssh 时为 true，host 是 Tunnel 域名 */
+  tunnel?: boolean
+}
+
+/**
+ * 识别 `ProxyCommand cloudflared access ssh --hostname %h` 一类配置，返回 Tunnel 域名（%h 替换为 HostName）；不是则返回空串。
+ * 服务令牌（--service-token-id 等）不导入：可能写在配置里，但不应随配置文件明文流转，请在编辑服务器时填写
+ */
+export function cloudflaredHostname(proxyCommand: string, hostname: string) {
+  const parts = proxyCommand.trim().split(/\s+/)
+  const exe = (parts[0] ?? '').split(/[\\/]/).pop()?.toLowerCase().replace(/\.exe$/, '')
+  if (exe !== 'cloudflared' || parts[1] !== 'access' || parts[2] !== 'ssh')
+    return ''
+  const i = parts.findIndex(p => p === '--hostname' || p.startsWith('--hostname='))
+  const value = i < 0 ? '%h' : parts[i].includes('=') ? parts[i].split('=')[1] : parts[i + 1] ?? ''
+  return value.replace(/%h/g, hostname).replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase()
 }
 
 /** 解析 OpenSSH 客户端配置；跳过含通配符的 Host 与 Match 块，Host * 中的默认值会应用到其他主机 */
@@ -52,6 +68,11 @@ export function parseSshConfig(text: string): ImportedHost[] {
       if (/[*?!]/.test(alias))
         continue
       const o = { ...defaults, ...b.opts }
+      const tunnelHost = o.proxycommand ? cloudflaredHostname(o.proxycommand, o.hostname || alias) : ''
+      if (tunnelHost) {
+        out.push({ alias, host: tunnelHost, port: 22, username: o.user || '', identityFile: (o.identityfile || '').split(/[\\/]/).pop() || '', proxyJump: '', tunnel: true })
+        continue
+      }
       out.push({
         alias,
         host: o.hostname || alias,

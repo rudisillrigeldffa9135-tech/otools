@@ -10,7 +10,8 @@ import { requireUser } from './auth'
 import { randomToken, sha256Hex } from './crypto'
 import { ApiError, now, readJson, str } from './lib'
 import { assertNotLimited, recordFailure } from './ratelimit'
-import { isPrivateHost, normalizeHost, normalizePort } from './webshell-target'
+import { isPrivateHost, normalizeHost, normalizePort, normalizeTunnelHost } from './webshell-target'
+import { describeTunnelStatus, tunnelUrl } from './webshell-tunnel'
 
 const ITEM_KINDS = new Set(['host', 'group', 'snippet', 'key', 'known_host', 'settings'])
 const MAX_ITEMS = 3000
@@ -24,12 +25,24 @@ const LOG_RETENTION = 30 * 86400
 
 /* ---------------- 地址校验 ---------------- */
 
-function target(env: Env, body: Record<string, unknown>) {
+/** 连接方式：'' 直连 TCP；'cftunnel' 经 Cloudflare Tunnel（域名 + 可选的 Access 服务令牌） */
+export type Via = '' | 'cftunnel'
+
+function target(env: Env, body: Record<string, unknown>): { host: string, port: number, via: Via } {
+  if (body.via === 'cftunnel') {
+    // 本地开发：允许以 http://本机:端口 连接模拟的 Tunnel（见 tunnelUrl）
+    if (env.WEBSHELL_ALLOW_PRIVATE === 'true') {
+      const host = normalizeHost(body.host)
+      if (isPrivateHost(host))
+        return { host, port: normalizePort(body.port), via: 'cftunnel' }
+    }
+    return { host: normalizeTunnelHost(body.host), port: 443, via: 'cftunnel' }
+  }
   const host = normalizeHost(body.host)
   const port = normalizePort(body.port)
   if (env.WEBSHELL_ALLOW_PRIVATE !== 'true' && isPrivateHost(host))
     throw new ApiError(400, '无法连接内网或本机地址，请使用服务器的公网 IP 或域名（内网服务器可经公网跳板机连接）')
-  return { host, port }
+  return { host, port, via: '' }
 }
 
 /* ---------------- 主密码与加密条目 ---------------- */
@@ -158,7 +171,7 @@ export async function deleteItem(req: Request, env: Env, params: Record<string, 
 /** 签发一次性连接票据；同一用户 10 分钟内最多 200 次 */
 export async function createTicket(req: Request, env: Env) {
   const user = await requireUser(req, env)
-  const { host, port } = target(env, await readJson(req))
+  const { host, port, via } = target(env, await readJson(req))
   const limitKey = `webshell:ticket:${user.id}`
   await assertNotLimited(env, limitKey, 200)
   await recordFailure(env, limitKey, 600)
@@ -171,8 +184,8 @@ export async function createTicket(req: Request, env: Env) {
   const t = now()
   await env.DB.batch([
     env.DB.prepare('DELETE FROM webshell_tickets WHERE expires_at <= ?').bind(t),
-    env.DB.prepare('INSERT INTO webshell_tickets (token_hash, user_id, host, port, expires_at) VALUES (?, ?, ?, ?, ?)')
-      .bind(await sha256Hex(ticket), user.id, host, port, t + TICKET_TTL),
+    env.DB.prepare('INSERT INTO webshell_tickets (token_hash, user_id, host, port, via, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(await sha256Hex(ticket), user.id, host, port, via, t + TICKET_TTL),
   ])
   return { ticket, expiresIn: TICKET_TTL }
 }
@@ -185,19 +198,20 @@ export async function relay(req: Request, env: Env) {
     throw new ApiError(503, '服务端未启用 WebShell 中转')
   const ticket = new URL(req.url).searchParams.get('t') || ''
   const row = ticket
-    ? await env.DB.prepare('DELETE FROM webshell_tickets WHERE token_hash = ? RETURNING user_id, host, port, expires_at')
+    ? await env.DB.prepare('DELETE FROM webshell_tickets WHERE token_hash = ? RETURNING user_id, host, port, via, expires_at')
         .bind(await sha256Hex(ticket))
-        .first<{ user_id: number, host: string, port: number, expires_at: number }>()
+        .first<{ user_id: number, host: string, port: number, via: string, expires_at: number }>()
     : null
   if (!row || row.expires_at <= now())
     throw new ApiError(401, '连接票据无效或已过期，请重新连接')
   const t = now()
-  const log = await env.DB.prepare('INSERT INTO webshell_sessions (user_id, host, port, client_ip, started_at, last_seen) VALUES (?, ?, ?, ?, ?, ?) RETURNING id')
-    .bind(row.user_id, row.host, row.port, req.headers.get('CF-Connecting-IP') || '', t, t)
+  const log = await env.DB.prepare('INSERT INTO webshell_sessions (user_id, host, port, via, client_ip, started_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id')
+    .bind(row.user_id, row.host, row.port, row.via, req.headers.get('CF-Connecting-IP') || '', t, t)
     .first<{ id: number }>()
   const url = new URL('https://relay/')
   url.searchParams.set('host', row.host)
   url.searchParams.set('port', String(row.port))
+  url.searchParams.set('via', row.via)
   url.searchParams.set('log', String(log?.id ?? 0))
   const stub = env.WEBSHELL_RELAY.get(env.WEBSHELL_RELAY.newUniqueId())
   return stub.fetch(new Request(url, { headers: req.headers }))
@@ -263,12 +277,14 @@ export async function probe(req: Request, env: Env) {
       return { error: e instanceof ApiError ? e.message : '地址不正确' }
     }
   })
-  const out: { ok: boolean, ms?: number, error?: string }[] = []
+  const out: { ok: boolean, ms?: number, error?: string, note?: string }[] = []
   for (let i = 0; i < targets.length; i += 6) {
     out.push(...await Promise.all(targets.slice(i, i + 6).map(async (x: any) => {
       if (x.error)
         return { ok: false, error: x.error }
       const start = Date.now()
+      if (x.via === 'cftunnel')
+        return probeTunnel(x.host, x.port)
       try {
         const socket = await openSocket(x.host, x.port, 4000)
         const ms = Date.now() - start
@@ -283,11 +299,37 @@ export async function probe(req: Request, env: Env) {
   return out
 }
 
+/**
+ * Tunnel 的在线检测：不带服务令牌发起 WebSocket 握手（令牌是端到端加密保存的，服务端拿不到）。
+ * 101 说明隧道在线；受 Access 保护时会被拦在 Access（302/403），只能确认域名在 Cloudflare 上可达，无法判断 cloudflared 是否在线
+ */
+async function probeTunnel(host: string, port: number): Promise<{ ok: boolean, ms?: number, error?: string, note?: string }> {
+  const start = Date.now()
+  try {
+    const res = await Promise.race([
+      fetch(tunnelUrl(host, port), { headers: { 'Upgrade': 'websocket', 'User-Agent': 'otools-webshell' }, redirect: 'manual' }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), 4000)),
+    ])
+    const ms = Date.now() - start
+    res.webSocket?.accept()
+    res.webSocket?.close(1000, 'probe')
+    res.body?.cancel().catch(() => {})
+    if (res.status === 101)
+      return { ok: true, ms }
+    if ([301, 302, 303, 307, 401, 403].includes(res.status))
+      return { ok: true, ms, note: '受 Cloudflare Access 保护，无法检测 cloudflared 是否在线' }
+    return { ok: false, error: describeTunnelStatus(res.status, res.headers.get('Location') || '') }
+  }
+  catch (e) {
+    return { ok: false, error: /timed out/.test(String(e)) ? '连接 Tunnel 超时' : '无法连接 Tunnel' }
+  }
+}
+
 /** 本人最近 50 条连接记录 */
 export async function listSessions(req: Request, env: Env) {
   const user = await requireUser(req, env)
   const { results } = await env.DB.prepare(
-    `SELECT id, host, port, client_ip, started_at, last_seen, ended_at, bytes_in, bytes_out, error
+    `SELECT id, host, port, via, client_ip, started_at, last_seen, ended_at, bytes_in, bytes_out, error
        FROM webshell_sessions WHERE user_id = ? ORDER BY id DESC LIMIT 50`,
   ).bind(user.id).all<Record<string, number | string>>()
   const stale = now() - SESSION_STALE
@@ -295,6 +337,7 @@ export async function listSessions(req: Request, env: Env) {
     id: r.id,
     host: r.host,
     port: r.port,
+    via: r.via,
     clientIp: r.client_ip,
     startedAt: r.started_at,
     endedAt: r.ended_at || (Number(r.last_seen) < stale ? r.last_seen : 0),

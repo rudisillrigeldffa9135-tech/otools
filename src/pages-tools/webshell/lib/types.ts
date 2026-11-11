@@ -2,6 +2,7 @@
 import { formatHostPort } from './util'
 
 export type AuthType = 'password' | 'key' | 'interactive'
+export type HostVia = 'direct' | 'cftunnel'
 
 export interface Host {
   id: string
@@ -9,6 +10,14 @@ export interface Host {
   groupId: string
   host: string
   port: number
+  /**
+   * 连接方式：direct 直连 host:port；cftunnel 经 Cloudflare Tunnel（host 填 Tunnel 域名，port 不使用），
+   * 与 `cloudflared access ssh --hostname <域名>` 相同。旧数据没有该字段，视为 direct
+   */
+  via?: HostVia
+  /** Cloudflare Access 服务令牌（via 为 cftunnel 时使用；域名未受 Access 保护时留空） */
+  cfClientId?: string
+  cfClientSecret?: string
   username: string
   auth: AuthType
   /** auth 为 password 时使用；interactive 时可作为第一步的密码 */
@@ -119,6 +128,9 @@ export function emptyHost(): Host {
     groupId: '',
     host: '',
     port: 22,
+    via: 'direct',
+    cfClientId: '',
+    cfClientSecret: '',
     username: 'root',
     auth: 'password',
     password: '',
@@ -136,6 +148,11 @@ export function emptyHost(): Host {
 
 export const HOST_COLORS = ['', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899']
 
-export function hostLabel(h: Pick<Host, 'username' | 'host' | 'port'>) {
-  return `${h.username ? `${h.username}@` : ''}${formatHostPort(h.host, h.port)}`
+export function isTunnel(h: Pick<Host, 'via'>) {
+  return h.via === 'cftunnel'
+}
+
+export function hostLabel(h: Pick<Host, 'username' | 'host' | 'port' | 'via'>) {
+  const user = h.username ? `${h.username}@` : ''
+  return isTunnel(h) ? `${user}${h.host}（Tunnel）` : `${user}${formatHostPort(h.host, h.port)}`
 }

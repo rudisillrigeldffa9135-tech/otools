@@ -12,8 +12,21 @@ const open = defineModel<boolean>({ required: true })
 
 const form = ref<Host>(emptyHost())
 const showPwd = ref(false)
+const showSecret = ref(false)
+const showGuide = ref(false)
 const saving = ref(false)
 const newGroup = ref('')
+
+const VIAS = [
+  { value: 'direct', label: '直连' },
+  { value: 'cftunnel', label: 'Cloudflare Tunnel' },
+]
+const tunnel = computed(() => form.value.via === 'cftunnel')
+
+/** Tunnel 域名：允许粘贴 https://ssh.example.com/ 或 user@ssh.example.com，取出域名 */
+function tunnelHost(input: string) {
+  return input.trim().replace(/^[a-z]+:\/\//i, '').replace(/[/?#].*$/, '').replace(/^.*@/, '').replace(/:\d+$/, '').toLowerCase()
+}
 
 const AUTHS = [
   { value: 'password', label: '密码' },
@@ -25,7 +38,10 @@ watch(open, (v) => {
   if (!v)
     return
   form.value = props.host ? { ...emptyHost(), ...props.host } : { ...emptyHost(), groupId: lastGroup() }
+  form.value.via ||= 'direct'
   showPwd.value = false
+  showSecret.value = false
+  showGuide.value = false
   newGroup.value = ''
 })
 
@@ -71,6 +87,23 @@ function pickGroup(i: number) {
 
 function validate() {
   const f = form.value
+  if (f.via === 'cftunnel') {
+    const at = f.host.trim().match(/^([^@/:]+)@/)
+    if (at && !f.username.trim())
+      f.username = at[1]
+    f.host = tunnelHost(f.host)
+    if (!/^[a-z0-9_-]+(?:\.[a-z0-9_-]+)+$/.test(f.host) || /^[\d.]+$/.test(f.host))
+      return '请填写 Tunnel 域名，如 ssh.example.com'
+    f.cfClientId = (f.cfClientId ?? '').trim()
+    f.cfClientSecret = (f.cfClientSecret ?? '').trim()
+    if (!!f.cfClientId !== !!f.cfClientSecret)
+      return '服务令牌的 Client ID 与 Client Secret 需要同时填写'
+    if (!f.username.trim())
+      return '请填写用户名'
+    if (f.auth === 'key' && !f.keyId)
+      return '请选择私钥，没有的话先在「密钥管理」中导入或生成'
+    return ''
+  }
   // 粘贴 user@host:port、[IPv6]:port 等时自动拆开
   const parsed = parseHostInput(f.host)
   f.host = parsed.host
@@ -101,7 +134,11 @@ async function submit(connect: boolean) {
     const saved = await save('host', {
       ...f,
       name: f.name.trim() || f.host,
-      port: Number(f.port) || 22,
+      port: f.via === 'cftunnel' ? 22 : Number(f.port) || 22,
+      // 直连时不保留令牌；Tunnel 不支持再经跳板机
+      cfClientId: f.via === 'cftunnel' ? f.cfClientId : '',
+      cfClientSecret: f.via === 'cftunnel' ? f.cfClientSecret : '',
+      jumpHostId: f.via === 'cftunnel' ? '' : f.jumpHostId,
       username: f.username.trim(),
       password: f.auth === 'key' ? '' : f.password,
       createdAt: f.createdAt || Math.floor(Date.now() / 1000),
@@ -142,16 +179,24 @@ function del() {
         {{ host ? '编辑服务器' : '新建服务器' }}
       </view>
 
+      <view class="ws-form__label">
+        连接方式
+      </view>
+      <ot-segmented v-model="form.via" :options="VIAS" size="small" />
+
       <view class="flex gap-3">
         <view class="min-w-0 flex-[3]">
           <view class="ws-form__label">
-            地址 <text class="text-red-500">*</text>
+            {{ tunnel ? 'Tunnel 域名' : '地址' }} <text class="text-red-500">*</text>
           </view>
           <view class="ws-form__field">
-            <input v-model="form.host" class="ot-mono min-w-0 flex-1" placeholder="IP、域名，或 user@host:port" :maxlength="253">
+            <input
+              v-model="form.host" class="ot-mono min-w-0 flex-1" :maxlength="253"
+              :placeholder="tunnel ? 'cloudflared 中配置的域名，如 ssh.example.com' : 'IP、域名，或 user@host:port'"
+            >
           </view>
         </view>
-        <view class="min-w-0 flex-1">
+        <view v-if="!tunnel" class="min-w-0 flex-1">
           <view class="ws-form__label">
             端口
           </view>
@@ -160,6 +205,31 @@ function del() {
           </view>
         </view>
       </view>
+
+      <template v-if="tunnel">
+        <view class="ws-form__label flex items-center">
+          <text class="flex-1">Access 服务令牌</text>
+          <text class="ws-form__link" @click="showGuide = !showGuide">{{ showGuide ? '收起说明' : '如何获取？' }}</text>
+        </view>
+        <view class="ws-form__field">
+          <input v-model="form.cfClientId" class="ot-mono min-w-0 flex-1" placeholder="Client ID（xxxx.access）" :maxlength="200">
+        </view>
+        <view class="ws-form__field mt-2">
+          <input v-model="form.cfClientSecret" class="ot-mono min-w-0 flex-1" :password="!showSecret" placeholder="Client Secret" :maxlength="500">
+          <view class="ws-form__icon" :class="showSecret ? 'i-carbon-view-off' : 'i-carbon-view'" @click="showSecret = !showSecret" />
+        </view>
+        <view v-if="!form.cfClientId && !form.cfClientSecret" class="ws-form__warn">
+          <view class="i-carbon-warning-alt shrink-0" />
+          <text>未填写令牌只能连接没有配置 Cloudflare Access 的域名，这样任何人都能连到这台服务器的 SSH，强烈建议配置 Access。</text>
+        </view>
+        <view v-if="showGuide" class="ws-form__guide">
+          <text class="block">1. 服务器上的 cloudflared 为这个域名配置 ingress：service 为 ssh://localhost:22</text>
+          <text class="block">2. Cloudflare Zero Trust → Access → 服务凭据 → 创建服务令牌，复制 Client ID 与 Client Secret（Secret 只显示一次）</text>
+          <text class="block">3. Access → 应用程序 → 为该域名添加「自托管」应用，策略操作选「Service Auth」，规则选择上面的服务令牌</text>
+          <text class="block">4. 把令牌填到这里。令牌与密码一样用主密码加密后同步，连接时只在中转的内存中使用</text>
+          <text class="mt-1 block text-muted">完整步骤见项目文档 docs/webshell-cloudflare-tunnel.md</text>
+        </view>
+      </template>
 
       <view class="flex gap-3">
         <view class="min-w-0 flex-1">
@@ -220,18 +290,20 @@ function del() {
         </picker>
       </template>
 
-      <view class="ws-form__label">
-        跳板机
-      </view>
-      <picker :range="jumpOptions" range-key="name" :value="jumpIndex" @change="form.jumpHostId = jumpOptions[Number($event.detail.value)].id">
-        <view class="ws-form__field is-pick">
-          <text class="min-w-0 flex-1 truncate">{{ jumpOptions[jumpIndex]?.name }}</text>
-          <view class="i-carbon-chevron-down text-muted" />
+      <template v-if="!tunnel">
+        <view class="ws-form__label">
+          跳板机
         </view>
-      </picker>
-      <view class="mt-1 text-12px text-muted">
-        内网服务器可以经一台公网服务器跳转连接（相当于 ssh -J）。
-      </view>
+        <picker :range="jumpOptions" range-key="name" :value="jumpIndex" @change="form.jumpHostId = jumpOptions[Number($event.detail.value)].id">
+          <view class="ws-form__field is-pick">
+            <text class="min-w-0 flex-1 truncate">{{ jumpOptions[jumpIndex]?.name }}</text>
+            <view class="i-carbon-chevron-down text-muted" />
+          </view>
+        </picker>
+        <view class="mt-1 text-12px text-muted">
+          内网服务器可以经一台公网服务器跳转连接（相当于 ssh -J）；没有公网 IP 的服务器也可以改用 Cloudflare Tunnel 连接。
+        </view>
+      </template>
 
       <view class="ws-form__label">
         登录后执行

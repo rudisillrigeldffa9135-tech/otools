@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isPrivateHost, normalizeHost, normalizePort } from './webshell-target'
+import { isPrivateHost, normalizeHost, normalizePort, normalizeTunnelHost } from './webshell-target'
 
 describe('webShell 连接目标校验', () => {
   it('规范化地址', () => {
@@ -23,5 +23,15 @@ describe('webShell 连接目标校验', () => {
       expect(isPrivateHost(h), h).toBe(true)
     for (const h of ['example.com', '8.8.8.8', '172.32.0.1', '100.128.0.1', '2001:db8::1', '::ffff:8.8.8.8'])
       expect(isPrivateHost(h), h).toBe(false)
+  })
+})
+
+describe('normalizeTunnelHost Tunnel 域名', () => {
+  it('接受公网域名并规范化', () => {
+    expect(normalizeTunnelHost('SSH.Example.com.')).toBe('ssh.example.com')
+  })
+  it('拒绝 IP、单段主机名与内网名', () => {
+    for (const v of ['1.2.3.4', '2001:db8::1', 'localhost', 'server', 'nas.local', 'a.internal'])
+      expect(() => normalizeTunnelHost(v)).toThrow()
   })
 })

@@ -10,6 +10,17 @@ export function normalizeHost(value: unknown) {
   return host.replace(/\.$/, '')
 }
 
+/**
+ * Cloudflare Tunnel 的 SSH 域名：只能是公网域名（不能是 IP、内网名），
+ * 中转只会以 WebSocket 方式请求 https://<域名>/，避免被用来访问任意地址
+ */
+export function normalizeTunnelHost(value: unknown) {
+  const host = normalizeHost(value)
+  if (host.includes(':') || /^\d+(?:\.\d+){3}$/.test(host) || !host.includes('.') || isPrivateHost(host))
+    throw new ApiError(400, 'Tunnel 地址需填写 Cloudflare 上配置的域名，如 ssh.example.com')
+  return host
+}
+
 export function normalizePort(value: unknown) {
   const port = value === undefined || value === null || value === '' ? 22 : Number(value)
   if (!Number.isInteger(port) || port < 1 || port > 65535)

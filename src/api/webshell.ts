@@ -21,6 +21,8 @@ export interface IWebshellSession {
   id: number
   host: string
   port: number
+  /** '' 直连；'cftunnel' 经 Cloudflare Tunnel */
+  via: string
   clientIp: string
   startedAt: number
   endedAt: number
@@ -58,12 +60,13 @@ export function deleteWebshellItem(id: string) {
   return http.delete<null>(`/webshell/items/${id}`)
 }
 
-export function createWebshellTicket(host: string, port: number) {
-  return http.post<{ ticket: string, expiresIn: number }>('/webshell/ticket', { host, port }, undefined, undefined, { hideErrorToast: true })
+/** via 为 cftunnel 时 host 是 Tunnel 域名；服务令牌不经过这里，连接建立后直接发给中转 */
+export function createWebshellTicket(host: string, port: number, via: '' | 'cftunnel' = '') {
+  return http.post<{ ticket: string, expiresIn: number }>('/webshell/ticket', { host, port, via }, undefined, undefined, { hideErrorToast: true })
 }
 
-export function probeWebshellHosts(targets: { host: string, port: number }[]) {
-  return http.post<{ ok: boolean, ms?: number, error?: string }[]>('/webshell/probe', { targets }, undefined, undefined, { hideErrorToast: true })
+export function probeWebshellHosts(targets: { host: string, port: number, via?: '' | 'cftunnel' }[]) {
+  return http.post<{ ok: boolean, ms?: number, error?: string, note?: string }[]>('/webshell/probe', { targets }, undefined, undefined, { hideErrorToast: true })
 }
 
 export function listWebshellSessions() {

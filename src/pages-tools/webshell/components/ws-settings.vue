@@ -289,7 +289,7 @@ function duration(s: IWebshellSession) {
         <view v-for="r in log" :key="r.id" class="ws-known">
           <view class="min-w-0 flex-1">
             <view class="flex items-center gap-2">
-              <text class="ot-mono truncate text-12px text-main">{{ r.host }}:{{ r.port }}</text>
+              <text class="ot-mono truncate text-12px text-main">{{ r.via === 'cftunnel' ? `${r.host}（Tunnel）` : `${r.host}:${r.port}` }}</text>
               <text v-if="!r.endedAt" class="shrink-0 text-11px text-green-600">进行中</text>
             </view>
             <view class="truncate text-11px text-muted">

@@ -53,6 +53,29 @@
   cursor: pointer;
 }
 
+.ws-form__warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.ws-form__guide {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--ot-text-2);
+  background: var(--ot-fill);
+}
+
 .ws-form__chip {
   padding: 3px 10px;
   border-radius: 999px;

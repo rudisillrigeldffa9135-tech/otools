@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { baseName, breadcrumbs, fillSnippet, formatHostPort, isTextLike, joinPath, looksBinary, modeToString, normalizePath, parentPath, parseHostInput, parseIdNames, parseOctalMode, parseSshConfig, shellQuote, snippetVars } from './util'
+import { baseName, breadcrumbs, cloudflaredHostname, fillSnippet, formatHostPort, isTextLike, joinPath, looksBinary, modeToString, normalizePath, parentPath, parseHostInput, parseIdNames, parseOctalMode, parseSshConfig, shellQuote, snippetVars } from './util'
 
 describe('导入 SSH 配置', () => {
   it('解析主机、默认值、跳板机', () => {
@@ -108,5 +108,19 @@ describe('权限与其他', () => {
     expect(isTextLike('big.log', 3 * 1024 * 1024)).toBe(false)
     expect(looksBinary(new Uint8Array([104, 105, 0, 1]))).toBe(true)
     expect(looksBinary(new TextEncoder().encode('你好'))).toBe(false)
+  })
+})
+
+describe('cloudflare Tunnel 的 ProxyCommand 识别', () => {
+  it('解析 --hostname，%h 替换为 HostName', () => {
+    expect(cloudflaredHostname('cloudflared access ssh --hostname %h', 'ssh.example.com')).toBe('ssh.example.com')
+    expect(cloudflaredHostname('/usr/local/bin/cloudflared access ssh --hostname=box.example.com', 'x')).toBe('box.example.com')
+    expect(cloudflaredHostname('C:/tools/cloudflared.exe access ssh --hostname https://a.example.com/', 'x')).toBe('a.example.com')
+    expect(cloudflaredHostname('nc -X 5 -x proxy:1080 %h %p', 'x')).toBe('')
+  })
+
+  it('parseSshConfig 把 cloudflared 代理的主机识别为 Tunnel', () => {
+    const [h] = parseSshConfig('Host nas\n  HostName nas.example.com\n  User admin\n  ProxyCommand cloudflared access ssh --hostname %h')
+    expect(h).toMatchObject({ alias: 'nas', host: 'nas.example.com', username: 'admin', tunnel: true })
   })
 })

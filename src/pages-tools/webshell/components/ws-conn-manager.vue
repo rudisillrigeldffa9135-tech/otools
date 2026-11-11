@@ -5,6 +5,7 @@ import { copyText, toast } from '@/utils/common'
 import { openMenu } from '../lib/menu'
 import { openSession } from '../lib/sessions'
 import { data, remove, save } from '../lib/store'
+import { isTunnel } from '../lib/types'
 import { formatHostPort } from '../lib/util'
 
 const emit = defineEmits<{ editHost: [host: Host | null], importConfig: [], importFinalshell: [] }>()
@@ -133,7 +134,7 @@ function newMenu(e: MouseEvent) {
                 <span v-if="h.pinned" class="i-carbon-pin-filled shrink-0 text-amber-500" />
                 <span class="truncate">{{ h.name }}</span>
               </span>
-              <span class="ws-cm__c-host ot-mono">{{ formatHostPort(h.host, h.port) }}</span>
+              <span class="ws-cm__c-host ot-mono">{{ isTunnel(h) ? `${h.host}（Tunnel）` : formatHostPort(h.host, h.port) }}</span>
               <span class="ws-cm__c-user">{{ h.username }}</span>
               <span class="ws-cm__c-note">{{ h.note }}</span>
             </div>
